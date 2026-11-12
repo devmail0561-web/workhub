@@ -10,6 +10,7 @@ Cette documentation décrit **ce qui est implémenté, comment le faire tourner,
 | [Développement](developpement.md) | commandes, workflow, définition de « terminé » |
 | [Architecture](architecture.md) | structure du dépôt et règles de dépendance |
 | [Journal d'implémentation](implementation/README.md) | l'historique détaillé, tâche par tâche |
+| [Changelog](../CHANGELOG.md) | la liste des changements notables, par version |
 | [ADR](adr/README.md) | les décisions d'architecture et leur justification |
 
 ## Documents de référence du projet

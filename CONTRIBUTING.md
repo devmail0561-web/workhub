@@ -46,6 +46,7 @@ Le dépôt applique un **monolithe modulaire** (Clean Architecture). Les règles
 6. ADR / documentation mis à jour.
 7. Page `docs/implementation/E<epic>-<theme>.md` créée ou mise à jour, avec les commandes de
    vérification et leurs résultats (voir le [modèle](docs/implementation/TEMPLATE.md)).
+8. Entrée ajoutée ou complétée dans [`CHANGELOG.md`](CHANGELOG.md) (section `Unreleased`).
 
 ## Documentation
 

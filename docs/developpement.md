@@ -38,9 +38,10 @@ Depuis `cli/` : `uv run pytest`, `uv run ruff check .`, `uv run ruff format --ch
 1. Lire la tâche correspondante dans le [backlog](../tasks/workhub-plan-developpement.md).
 2. Implémenter **avec ses tests** (test de permission obligatoire pour tout endpoint).
 3. Créer ou mettre à jour la page d'implémentation dans `docs/implementation/`.
-4. Si la tâche prend une décision structurante, rédiger l'ADR correspondante.
-5. Vérifier localement les six commandes backend ci-dessus.
-6. Commiter (message `type(scope): description`).
+4. Ajouter l'entrée correspondante dans `CHANGELOG.md` (section `Unreleased`).
+5. Si la tâche prend une décision structurante, rédiger l'ADR correspondante.
+6. Vérifier localement les six commandes backend ci-dessus.
+7. Commiter (message `type(scope): description`).
 
 ## Définition de « terminé »
 
@@ -54,6 +55,7 @@ Reprise de la DoD du plan, complétée par l'exigence de documentation :
 6. ADR mise à jour si une décision structurante est prise.
 7. **Page `docs/implementation/` créée ou mise à jour**, avec commandes et résultats de
    vérification.
+8. **Entrée ajoutée ou complétée dans `CHANGELOG.md`** (section `Unreleased`).
 
 ## Conventions de code
 

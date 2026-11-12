@@ -49,6 +49,7 @@ docker compose -f deploy/docker-compose.yml up
 - Développement, commandes, DoD : [`docs/developpement.md`](docs/developpement.md)
 - Architecture et règles de dépendance : [`docs/architecture.md`](docs/architecture.md)
 - Journal d'implémentation : [`docs/implementation/`](docs/implementation/README.md)
+- Journal des changements : [`CHANGELOG.md`](CHANGELOG.md)
 - Décisions d'architecture : [`docs/adr/`](docs/adr/README.md)
 - Plan de développement et backlog : [`tasks/workhub-plan-developpement.md`](tasks/workhub-plan-developpement.md)
 - Cahier des charges : [`docs/plans-de-travail.pdf`](docs/plans-de-travail.pdf)
