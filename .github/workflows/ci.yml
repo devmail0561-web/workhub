@@ -1,0 +1,117 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (lint, types, architecture, tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: workhub
+          POSTGRES_PASSWORD: workhub
+          POSTGRES_DB: workhub_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U workhub -d workhub_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql+psycopg://workhub:workhub@localhost:5432/workhub_test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installer uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Installer Python 3.12
+        run: uv python install 3.12
+
+      - name: Installer les dépendances
+        run: uv sync --frozen
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
+      - name: Format (ruff)
+        run: uv run ruff format --check .
+
+      - name: Typage (pyright strict)
+        run: uv run pyright
+
+      - name: Architecture (import-linter)
+        run: uv run lint-imports
+
+      - name: Tests (pytest)
+        run: uv run pytest
+
+      - name: Audit des dépendances (pip-audit)
+        run: uv run pip-audit
+
+  cli:
+    name: CLI (lint, types, tests, architecture)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cli
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installer uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Installer Python 3.12
+        run: uv python install 3.12
+
+      - name: Installer les dépendances
+        run: uv sync --frozen
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
+      - name: Format (ruff)
+        run: uv run ruff format --check .
+
+      - name: Typage (pyright strict)
+        run: uv run pyright
+
+      - name: Architecture (import-linter)
+        run: uv run lint-imports
+
+      - name: Tests (pytest)
+        run: uv run pytest
+
+  docker:
+    name: Build Docker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Valider la configuration Compose
+        working-directory: deploy
+        run: docker compose --env-file .env.example config --quiet
+
+      - name: Construire l'image API
+        run: docker build -t workhub-api:ci backend

@@ -1,0 +1,115 @@
+[project]
+name = "workhub"
+version = "0.1.0"
+description = "Référentiel de compétences, projets, plans de travail et Skills"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.5",
+    "uvicorn[standard]>=0.32",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.27",
+    "import-linter>=2.1",
+    "pip-audit>=2.7",
+    "pre-commit>=4.0",
+    "pyright>=1.1",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.8",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/workhub"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+    "RUF", # ruff-specific rules
+]
+ignore = []
+
+[tool.ruff.lint.isort]
+known-first-party = ["workhub"]
+
+[tool.pyright]
+include = ["src", "tests"]
+exclude = [".venv", "**/__pycache__"]
+typeCheckingMode = "strict"
+pythonVersion = "3.12"
+venvPath = "."
+venv = ".venv"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+pythonpath = ["src"]
+addopts = "-ra"
+
+[tool.importlinter]
+root_package = "workhub"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "1. Le domaine ne dépend d'aucun framework technique"
+type = "forbidden"
+source_modules = ["workhub.*.domain"]
+forbidden_modules = [
+    "fastapi",
+    "sqlalchemy",
+    "workhub.*.application",
+    "workhub.*.infrastructure",
+    "workhub.interfaces",
+]
+
+[[tool.importlinter.contracts]]
+name = "2. La couche application ignore infrastructure et interfaces"
+type = "forbidden"
+source_modules = ["workhub.*.application"]
+forbidden_modules = ["workhub.*.infrastructure", "workhub.interfaces"]
+
+[[tool.importlinter.contracts]]
+name = "3. Indépendance des modules (tout couplage doit être déclaré explicitement)"
+type = "independence"
+modules = [
+    "workhub.shared",
+    "workhub.iam",
+    "workhub.skills",
+    "workhub.projects",
+    "workhub.plans",
+    "workhub.competencies",
+    "workhub.execution",
+    "workhub.knowledge",
+    "workhub.tools",
+    "workhub.proposals",
+    "workhub.integrations",
+    "workhub.audit",
+]
+
+[[tool.importlinter.contracts]]
+name = "4. Les interfaces ne parlent qu'à la couche application"
+type = "forbidden"
+source_modules = ["workhub.interfaces.rest", "workhub.interfaces.mcp"]
+forbidden_modules = ["workhub.*.domain", "workhub.*.infrastructure"]
+

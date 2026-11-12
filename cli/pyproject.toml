@@ -1,0 +1,57 @@
+[project]
+name = "workhub-cli"
+version = "0.1.0"
+description = "Client en ligne de commande de WorkHub (HTTP uniquement)"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.27",
+    "typer>=0.12",
+]
+
+[dependency-groups]
+dev = [
+    "import-linter>=2.1",
+    "pyright>=1.1",
+    "pytest>=8.3",
+    "ruff>=0.8",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/workhub_cli"]
+
+[tool.importlinter]
+root_package = "workhub_cli"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "5. Le CLI ne dépend pas du package backend"
+type = "forbidden"
+source_modules = ["workhub_cli"]
+forbidden_modules = ["workhub"]
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["workhub_cli"]
+
+[tool.pyright]
+include = ["src", "tests"]
+exclude = [".venv", "**/__pycache__"]
+typeCheckingMode = "strict"
+pythonVersion = "3.12"
+venvPath = "."
+venv = ".venv"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra"
