@@ -1,0 +1,72 @@
+default_language_version:
+  python: python3.12
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=1024"]
+
+  # Les hooks locaux s'exécutent depuis la racine du dépôt : chaque hook se place
+  # dans le bon projet (backend/ ou cli/) pour utiliser son propre venv et sa config.
+  - repo: local
+    hooks:
+      - id: backend-ruff
+        name: backend — ruff check
+        entry: bash -c 'cd backend && uv run ruff check --fix .'
+        language: system
+        types: [python]
+        files: ^backend/
+        pass_filenames: false
+      - id: backend-ruff-format
+        name: backend — ruff format
+        entry: bash -c 'cd backend && uv run ruff format .'
+        language: system
+        types: [python]
+        files: ^backend/
+        pass_filenames: false
+      - id: backend-pyright
+        name: backend — pyright strict
+        entry: bash -c 'cd backend && uv run pyright'
+        language: system
+        pass_filenames: false
+        files: ^backend/
+      - id: backend-import-linter
+        name: backend — import-linter
+        entry: bash -c 'cd backend && uv run lint-imports'
+        language: system
+        pass_filenames: false
+        files: ^backend/(src/|pyproject\.toml)
+
+      - id: cli-ruff
+        name: cli — ruff check
+        entry: bash -c 'cd cli && uv run ruff check --fix .'
+        language: system
+        types: [python]
+        files: ^cli/
+        pass_filenames: false
+      - id: cli-ruff-format
+        name: cli — ruff format
+        entry: bash -c 'cd cli && uv run ruff format .'
+        language: system
+        types: [python]
+        files: ^cli/
+        pass_filenames: false
+      - id: cli-pyright
+        name: cli — pyright strict
+        entry: bash -c 'cd cli && uv run pyright'
+        language: system
+        pass_filenames: false
+        files: ^cli/
+      - id: cli-import-linter
+        name: cli — import-linter
+        entry: bash -c 'cd cli && uv run lint-imports'
+        language: system
+        pass_filenames: false
+        files: ^cli/(src/|pyproject\.toml)

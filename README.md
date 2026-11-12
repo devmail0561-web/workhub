@@ -13,7 +13,7 @@ L'application ne contient **aucun LLM** : elle expose des données et des cas d'
 | CLI | Typer + httpx (`workhub-cli`) |
 | Frontend | Vite, React, TypeScript strict, Tailwind, shadcn/ui, TanStack Router/Query, Monaco |
 | Qualité | uv, ruff, pyright strict, pytest, import-linter, pre-commit |
-| Infra | Docker Compose, Caddy, GitHub Actions |
+| Infra | Docker Compose, Nginx (local) ; Caddy (TLS/production, à venir), GitHub Actions |
 
 ## Structure du dépôt
 
@@ -24,7 +24,7 @@ L'application ne contient **aucun LLM** : elle expose des données et des cas d'
 │   └── tests/          # unit / integration / contract / security
 ├── cli/                # client en ligne de commande (HTTP uniquement)
 ├── frontend/           # interface web React
-├── deploy/             # docker-compose, Caddyfile, sauvegardes
+├── deploy/             # docker-compose, web local ; Caddyfile/sauvegardes à venir
 ├── docs/               # adr / specs / integrations
 └── .github/workflows/  # CI
 ```

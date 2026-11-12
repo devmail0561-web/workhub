@@ -1,0 +1,163 @@
+# Audit initial de l'implémentation — 2026-11-12
+
+| Champ | Valeur |
+|---|---|
+| Date | 2026-11-12 |
+| Périmètre | dépôt complet, commit `b4bcf35` + corrections de l'audit |
+| Référentiels | [plan de développement](../../tasks/workhub-plan-developpement.md), [architecture](../architecture.md), DoD |
+| Verdict | **Fondations saines et fonctionnelles** ; 6 défauts corrigés, 6 risques moyens et 8 points mineurs documentés |
+
+## Résumé exécutif
+
+L'implémentation E0-01 → E0-05 est conforme au plan et reproductible : lint, format, typage strict
+et règles d'architecture passent, les tests passent, la stack Docker est saine et tourne
+désormais avec un utilisateur non privilégié. L'audit a toutefois révélé que **la configuration
+`pre-commit` ne fonctionnait pas** (emplacement, répertoire d'exécution, motifs de fichiers) :
+le garde-fou local annoncé dans la documentation était inopérant. C'est le défaut le plus
+important, corrigé pendant l'audit et vérifié.
+
+Les points restants sont des **choix de durcissement ou de gouvernance** à traiter avant les
+jalons concernés : couverture de tests, reproductibilité de l'image, surface réseau de
+développement, et interprétation du contrat d'indépendance des modules.
+
+## Méthode
+
+Inspection manuelle des fichiers suivis, puis exécution de tous les contrôles :
+
+```bash
+# backend et cli
+uv run ruff check .
+uv run ruff format --check .
+uv run pyright
+uv run lint-imports
+uv run pytest
+uv run pip-audit
+uv lock --check
+
+# pré-commit (racine)
+uv run --project backend pre-commit run --all-files
+
+# docker
+docker compose --env-file .env.example config --quiet
+docker compose --env-file .env.example up -d --build
+docker inspect workhub-api-1 --format 'User={{.Config.User}}'
+
+# hygiène du dépôt
+git ls-files              # inventaire
+git grep -nE "(password|secret|token|api[_-]?key)\s*[:=]"   # secrets
+# vérification des liens relatifs des fichiers markdown
+```
+
+## Constats par sévérité
+
+### Élevé — corrigés
+
+| ID | Constat | Preuve | Correction |
+|---|---|---|---|
+| F-01 | `pre-commit` inopérant : config dans `backend/.pre-commit-config.yaml`, hooks exécutés à la racine du dépôt, `uv run pyright` sans projet résoluble, `files: ^src/` ne correspondait jamais à `backend/src/`, CLI non couvert | `pyright` échouait sur `cli/tests/test_package.py` ; `import-linter` affichait `(no files to check) Skipped` | config déplacée à la racine, un hook par projet via `bash -c 'cd <projet> && uv run …'` ; les 13 hooks passent |
+| F-02 | 21 fichiers suivis sans newline final | `end-of-file-fixer` a modifié 21 fichiers au premier passage | corrigé par le hook puis committé |
+
+### Moyen — corrigés
+
+| ID | Constat | Correction |
+|---|---|---|
+| F-03 | `.import_linter_cache/` ignoré uniquement par une config Git globale, pas par le `.gitignore` du dépôt | ajouté au `.gitignore` |
+| F-04 | l'image API tournait en **root** (`User=` vide) | ajout d'un utilisateur `appuser` (uid 10001) ; image reconstruite, `User=appuser`, conteneur `healthy` |
+| F-05 | les dépendances du CLI n'étaient pas auditées (`pip-audit` absent du groupe dev et du job CI `cli`) | `pip-audit` ajouté à `cli/pyproject.toml` et au job `cli` de la CI |
+| F-06 | le README annonçait **Caddy** alors que le web local utilise **Nginx** | README corrigé : Nginx local, Caddy pour TLS/production à venir |
+
+### Moyen — ouverts (recommandations)
+
+| ID | Risque | Impact | Recommandation |
+|---|---|---|---|
+| F-07 | Le contrat 3 (`independence`) est **plus strict** que la règle « échange via `workhub.<module>.api` » et interdit aussi l'import du noyau `workhub.shared` | faux positifs dès E0-08 (le noyau sera importé par tous les modules) | whitelister explicitement les imports autorisés via `ignore_imports`, ou retirer `shared` de l'indépendance et encadrer ses internals par un contrat dédié |
+| F-08 | L'image Docker fait `pip install .` : les versions résolues ignorent `uv.lock` | build non reproductible, dérive possible entre CI et prod | construire avec `uv sync --frozen` (ou `uv pip install --frozen`) dans le Dockerfile |
+| F-09 | Aucune mesure de couverture ; le plan §10 impose ≥ 90 % (domaine) et ≥ 80 % (global) | seuils non appliqués | ajouter `pytest-cov` et un seuil bloquant en CI avant le début de E1 |
+| F-10 | Ports publiés sur `0.0.0.0` ; mot de passe Postgres par défaut `workhub` si `.env` absent | exposition locale/réseau et identifiants faibles en dev | lier les ports à `127.0.0.1` et rendre `POSTGRES_PASSWORD` obligatoire (`${POSTGRES_PASSWORD:?…}`) |
+| F-11 | CI définie mais **jamais exécutée sur GitHub** (pas de remote) | le critère « PR bloquée si rouge » n'est pas prouvé | créer le dépôt distant et pousser la branche |
+| F-12 | Image de base non épinglée par digest, pas de scan d'image ni de SBOM | surface d'approvisionnement non maîtrisée | épingler `python:3.12-slim@sha256:…`, ajouter Trivy/Grype en CI |
+
+### Faible — ouverts
+
+| ID | Constat | Note |
+|---|---|---|
+| F-13 | version `0.1.0` dupliquée dans deux `pyproject.toml` et `workhub/__init__.py` | risque de dérive ; envisager une version dynamique depuis les métadonnées |
+| F-14 | `.dockerignore` utilise `__pycache__` (non récursif) | préférer `**/__pycache__` |
+| F-15 | pas de `HEALTHCHECK` dans le Dockerfile | couvert par Compose, acceptable pour l'instant |
+| F-16 | pas de `SECURITY.md`, `CODEOWNERS`, template de PR, `.editorconfig` | à ajouter avant collaboration élargie |
+| F-17 | versions d'actions GitHub (`checkout@v4`, `setup-uv@v5`) | à maintenir (Dependabot) |
+| F-18 | pas encore de tests de contrat ni de permissions | normal à ce stade (aucun endpoint protégé) |
+| F-19 | frontend absent (seulement README + placeholder) | prévu en E0-11 |
+| F-20 | pas d'ADR rédigées | prévu en E0-07 ; décisions structurantes déjà listées |
+
+## Conformité au plan (E0)
+
+| Tâche | Critère de fin | État |
+|---|---|---|
+| E0-01 | arborescence §3.2 en place | ✅ conforme |
+| E0-02 | `uv run pytest` et lint passent | ✅ conforme |
+| E0-03 | violation volontaire détectée | ✅ conforme (4 contrats backend + 1 CLI, vérifiés par violation temporaire) |
+| E0-04 | `docker compose up` sain | ✅ conforme (db/api/web `healthy`) |
+| E0-05 | PR bloquée si rouge | ⚠️ workflow défini et étapes reproduites localement, exécution GitHub en attente (F-11) |
+
+Éléments du plan non requis avant E0-06 : schéma de données, ADR, noyau `shared`, Alembic,
+logging, frontend.
+
+## Contrôles après correction
+
+| Contrôle | Backend | CLI |
+|---|---|---|
+| `ruff check` | `All checks passed!` | `All checks passed!` |
+| `ruff format --check` | 71 fichiers déjà formatés | 3 fichiers déjà formatés |
+| `pyright` (strict) | 0 erreur | 0 erreur |
+| `lint-imports` | 4 contrats `KEPT` | 1 contrat `KEPT` |
+| `pytest` | 1 test passé | 1 test passé |
+| `pip-audit` | aucune vulnérabilité connue | aucune vulnérabilité connue |
+| `uv lock --check` | OK | OK |
+
+```text
+pre-commit run --all-files : 13 hooks, tous Passed
+docker compose ps          : db (healthy), api (healthy), web (healthy)
+docker inspect api User    : appuser
+GET /api/v1/health         : {"status":"ok","version":"0.1.0"}
+liens relatifs markdown    : 16 fichiers analysés, 0 lien cassé
+secrets dans les fichiers suivis : aucun motif détecté
+```
+
+## Corrections appliquées
+
+| Fichier | Changement |
+|---|---|
+| `.pre-commit-config.yaml` (racine) | nouvelle config, hooks par projet, fonctionnelle et testée |
+| `backend/.pre-commit-config.yaml` | supprimé |
+| `.gitignore` | ajout de `.import_linter_cache/` |
+| `backend/Dockerfile` | exécution en `appuser` non privilégié |
+| `cli/pyproject.toml` | ajout de `pip-audit` + mise en forme |
+| `.github/workflows/ci.yml` | `pip-audit` ajouté au job `cli` |
+| `README.md` | clarification Nginx (local) / Caddy (production) |
+| `CONTRIBUTING.md`, `docs/installation.md` | installation de `pre-commit` depuis la racine |
+| 21 fichiers | newline final (via `end-of-file-fixer`) |
+
+## Recommandations priorisées
+
+**P0 — avant E1**
+1. Créer le dépôt distant et vérifier la CI réelle (F-11).
+2. Trancher F-07 (contrat d'indépendance vs noyau `shared`) avant d'écrire le noyau.
+3. Ajouter la couverture et son seuil en CI (F-09).
+
+**P1 — avant M1**
+4. Rendre l'image reproductible via `uv.lock` (F-08).
+5. Durcir la surface réseau de développement (F-10).
+6. Épingler et scanner l'image de base (F-12).
+
+**P2 — hygiène**
+7. F-13 → F-20 : version unique, `.dockerignore`, `SECURITY.md`, templates, Dependabot,
+   `.editorconfig`, ADR.
+
+## Conclusion
+
+Les fondations sont **validées** : outillage, règles d'architecture, stack locale et
+documentation sont cohérents et vérifiés. Le défaut majeur (`pre-commit` inopérant) est corrigé.
+Les risques restants sont connus, chiffrés et planifiés ; aucun ne bloque la poursuite vers
+**E0-06** (modèle de données) et **E0-07** (ADR), sous réserve de traiter F-07 avant **E0-08**
+(noyau `shared`).

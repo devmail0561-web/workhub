@@ -112,4 +112,3 @@ name = "4. Les interfaces ne parlent qu'à la couche application"
 type = "forbidden"
 source_modules = ["workhub.interfaces.rest", "workhub.interfaces.mcp"]
 forbidden_modules = ["workhub.*.domain", "workhub.*.infrastructure"]
-

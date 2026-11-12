@@ -9,9 +9,13 @@
 ## Mise en place
 
 ```bash
-cd backend
-uv sync
-uv run pre-commit install
+# Dépendances des deux projets Python
+cd backend && uv sync
+cd ../cli && uv sync
+
+# Hooks Git (config à la racine du dépôt)
+cd ..
+uv run --project backend pre-commit install
 ```
 
 ## Commandes

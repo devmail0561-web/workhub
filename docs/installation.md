@@ -19,7 +19,10 @@
 ```bash
 cd backend
 uv sync                # crée .venv et installe les dépendances (profil dev inclus)
-uv run pre-commit install
+
+# hooks Git : config à la racine du dépôt, exécutés depuis le venv backend
+cd ..
+uv run --project backend pre-commit install
 ```
 
 `uv sync` installe le package `workhub` en mode éditable ainsi que les outils de

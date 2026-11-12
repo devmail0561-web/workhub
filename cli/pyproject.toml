@@ -11,6 +11,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "import-linter>=2.1",
+    "pip-audit>=2.7",
     "pyright>=1.1",
     "pytest>=8.3",
     "ruff>=0.8",
@@ -32,6 +33,7 @@ name = "5. Le CLI ne dépend pas du package backend"
 type = "forbidden"
 source_modules = ["workhub_cli"]
 forbidden_modules = ["workhub"]
+
 [tool.ruff]
 target-version = "py312"
 line-length = 100

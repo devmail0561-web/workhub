@@ -29,14 +29,29 @@ développement : la version `0.1.0` correspond à l'amorçage, sans release publ
 - **Documentation (E0)** : `docs/README.md`, `docs/installation.md`, `docs/developpement.md`,
   `docs/architecture.md`, journal `docs/implementation/E0-fondations.md` et modèle
   `docs/implementation/TEMPLATE.md` ; index des ADR.
+- **Audit initial** : rapport [`docs/audits/2026-11-12-audit-initial.md`](docs/audits/2026-11-12-audit-initial.md).
 - **Changelog** : ce fichier.
 
 ### Changed
 
 - La définition de « terminé » exige désormais la mise à jour de la page d'implémentation de
-  l'epic concerné (`docs/implementation/`).
+  l'epic concerné (`docs/implementation/`) et une entrée dans ce changelog.
+- La configuration `pre-commit` est déplacée à la racine du dépôt avec un jeu de hooks par
+  projet ; installation via `uv run --project backend pre-commit install`.
+- Le README distingue Nginx (web local) et Caddy (TLS/production, à venir).
+
+### Fixed
+
+- `pre-commit` fonctionne réellement : les hooks ruff, pyright et import-linter s'exécutent dans
+  le bon projet et le motif de fichiers couvre bien les sources.
+- 21 fichiers sans newline final.
+- `.import_linter_cache/` ajouté au `.gitignore`.
+- L'image Docker de l'API ne tourne plus en root (utilisateur `appuser`, uid 10001).
+- Les dépendances du CLI sont désormais auditées (`pip-audit`) en local et en CI.
 
 ### Notes
 
 - CI définie mais pas encore exécutée sur GitHub (dépôt local sans remote).
 - API non connectée à PostgreSQL à ce stade (prévu en E0-06/E0-09).
+- Risques ouverts de l'audit (contrat d'indépendance vs noyau `shared`, couverture de tests,
+  reproductibilité de l'image Docker, surface réseau de dev) : voir le rapport d'audit.

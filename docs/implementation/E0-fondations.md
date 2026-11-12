@@ -71,8 +71,10 @@ configuration ruff/pyright/pytest et un contrat import-linter (règle 5).
 de premier test de bout en bout (`backend/tests/unit/test_health.py`, client `httpx`
 `ASGITransport` pour rester compatible avec pyright strict).
 
-**pre-commit** (`backend/.pre-commit-config.yaml`) : `ruff`, `ruff-format`, hooks de base
-(trailing whitespace, EOF, YAML, TOML), puis `pyright` et `lint-imports` en hooks locaux.
+**pre-commit** (`.pre-commit-config.yaml` à la racine) : hooks de base (trailing whitespace, EOF,
+YAML, TOML, conflits, gros fichiers), puis un jeu de hooks locaux par projet (`backend` et
+`cli`) exécutant ruff, pyright et import-linter depuis le bon environnement. À installer depuis
+la racine : `uv run --project backend pre-commit install`.
 
 Les fichiers `uv.lock` de `backend/` et `cli/` sont versionnés pour des builds reproductibles.
 
