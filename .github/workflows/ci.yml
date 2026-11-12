@@ -12,7 +12,7 @@ concurrency:
 jobs:
   backend:
     name: Backend (lint, types, architecture, tests)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     defaults:
       run:
         working-directory: backend
@@ -25,7 +25,7 @@ jobs:
           POSTGRES_PASSWORD: workhub
           POSTGRES_DB: workhub_test
         ports:
-          - 5432:5432
+          - 55432:5432
         options: >-
           --health-cmd "pg_isready -U workhub -d workhub_test"
           --health-interval 5s
@@ -33,7 +33,7 @@ jobs:
           --health-retries 10
 
     env:
-      DATABASE_URL: postgresql+psycopg://workhub:workhub@localhost:5432/workhub_test
+      DATABASE_URL: postgresql+psycopg://workhub:workhub@localhost:55432/workhub_test
 
     steps:
       - uses: actions/checkout@v4
@@ -69,7 +69,7 @@ jobs:
 
   cli:
     name: CLI (lint, types, tests, architecture)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     defaults:
       run:
         working-directory: cli
@@ -108,7 +108,7 @@ jobs:
 
   docker:
     name: Build Docker
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     steps:
       - uses: actions/checkout@v4
 
