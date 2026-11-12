@@ -48,10 +48,12 @@ développement : la version `0.1.0` correspond à l'amorçage, sans release publ
 - `.import_linter_cache/` ajouté au `.gitignore`.
 - L'image Docker de l'API ne tourne plus en root (utilisateur `appuser`, uid 10001).
 - Les dépendances du CLI sont désormais auditées (`pip-audit`) en local et en CI.
+- La CI s'exécute sur le runner **self-hosted** du dépôt (runners GitHub hébergés bloqués par
+  facturation) et le port du service Postgres est passé à `55432` pour éviter les conflits.
 
 ### Notes
 
-- CI définie mais pas encore exécutée sur GitHub (dépôt local sans remote).
+- Première CI verte sur GitHub : run `43317081941` (backend, CLI, docker).
 - API non connectée à PostgreSQL à ce stade (prévu en E0-06/E0-09).
 - Risques ouverts de l'audit (contrat d'indépendance vs noyau `shared`, couverture de tests,
   reproductibilité de l'image Docker, surface réseau de dev) : voir le rapport d'audit.

@@ -5,7 +5,7 @@
 | Date | 2026-11-12 |
 | Périmètre | dépôt complet, commit `b4bcf35` + corrections de l'audit |
 | Référentiels | [plan de développement](../../tasks/workhub-plan-developpement.md), [architecture](../architecture.md), DoD |
-| Verdict | **Fondations saines et fonctionnelles** ; 6 défauts corrigés, 6 risques moyens et 8 points mineurs documentés |
+| Verdict | **Fondations saines et fonctionnelles** ; 7 défauts corrigés, 5 risques moyens et 8 points mineurs documentés |
 
 ## Résumé exécutif
 
@@ -65,6 +65,7 @@ git grep -nE "(password|secret|token|api[_-]?key)\s*[:=]"   # secrets
 | F-04 | l'image API tournait en **root** (`User=` vide) | ajout d'un utilisateur `appuser` (uid 10001) ; image reconstruite, `User=appuser`, conteneur `healthy` |
 | F-05 | les dépendances du CLI n'étaient pas auditées (`pip-audit` absent du groupe dev et du job CI `cli`) | `pip-audit` ajouté à `cli/pyproject.toml` et au job `cli` de la CI |
 | F-06 | le README annonçait **Caddy** alors que le web local utilise **Nginx** | README corrigé : Nginx local, Caddy pour TLS/production à venir |
+| F-11 | CI jamais exécutée (pas de remote ; runners GitHub hébergés bloqués par facturation) | dépôt `devmail0561-web/workhub` poussé ; workflows basculés sur le runner self-hosted ; run `43317081941` vert (backend, CLI, docker) |
 
 ### Moyen — ouverts (recommandations)
 
@@ -74,7 +75,6 @@ git grep -nE "(password|secret|token|api[_-]?key)\s*[:=]"   # secrets
 | F-08 | L'image Docker fait `pip install .` : les versions résolues ignorent `uv.lock` | build non reproductible, dérive possible entre CI et prod | construire avec `uv sync --frozen` (ou `uv pip install --frozen`) dans le Dockerfile |
 | F-09 | Aucune mesure de couverture ; le plan §10 impose ≥ 90 % (domaine) et ≥ 80 % (global) | seuils non appliqués | ajouter `pytest-cov` et un seuil bloquant en CI avant le début de E1 |
 | F-10 | Ports publiés sur `0.0.0.0` ; mot de passe Postgres par défaut `workhub` si `.env` absent | exposition locale/réseau et identifiants faibles en dev | lier les ports à `127.0.0.1` et rendre `POSTGRES_PASSWORD` obligatoire (`${POSTGRES_PASSWORD:?…}`) |
-| F-11 | CI définie mais **jamais exécutée sur GitHub** (pas de remote) | le critère « PR bloquée si rouge » n'est pas prouvé | créer le dépôt distant et pousser la branche |
 | F-12 | Image de base non épinglée par digest, pas de scan d'image ni de SBOM | surface d'approvisionnement non maîtrisée | épingler `python:3.12-slim@sha256:…`, ajouter Trivy/Grype en CI |
 
 ### Faible — ouverts
@@ -98,7 +98,7 @@ git grep -nE "(password|secret|token|api[_-]?key)\s*[:=]"   # secrets
 | E0-02 | `uv run pytest` et lint passent | ✅ conforme |
 | E0-03 | violation volontaire détectée | ✅ conforme (4 contrats backend + 1 CLI, vérifiés par violation temporaire) |
 | E0-04 | `docker compose up` sain | ✅ conforme (db/api/web `healthy`) |
-| E0-05 | PR bloquée si rouge | ⚠️ workflow défini et étapes reproduites localement, exécution GitHub en attente (F-11) |
+| E0-05 | PR bloquée si rouge | ✅ workflow vert sur le runner self-hosted (run `43317081941`) |
 
 Éléments du plan non requis avant E0-06 : schéma de données, ADR, noyau `shared`, Alembic,
 logging, frontend.
@@ -122,6 +122,7 @@ docker inspect api User    : appuser
 GET /api/v1/health         : {"status":"ok","version":"0.1.0"}
 liens relatifs markdown    : 16 fichiers analysés, 0 lien cassé
 secrets dans les fichiers suivis : aucun motif détecté
+CI GitHub (self-hosted)    : run 43317081941 — backend, CLI et docker verts
 ```
 
 ## Corrections appliquées
@@ -141,18 +142,24 @@ secrets dans les fichiers suivis : aucun motif détecté
 ## Recommandations priorisées
 
 **P0 — avant E1**
-1. Créer le dépôt distant et vérifier la CI réelle (F-11).
-2. Trancher F-07 (contrat d'indépendance vs noyau `shared`) avant d'écrire le noyau.
-3. Ajouter la couverture et son seuil en CI (F-09).
+1. Trancher F-07 (contrat d'indépendance vs noyau `shared`) avant d'écrire le noyau.
+2. Ajouter la couverture et son seuil en CI (F-09).
 
 **P1 — avant M1**
-4. Rendre l'image reproductible via `uv.lock` (F-08).
-5. Durcir la surface réseau de développement (F-10).
-6. Épingler et scanner l'image de base (F-12).
+3. Rendre l'image reproductible via `uv.lock` (F-08).
+4. Durcir la surface réseau de développement (F-10).
+5. Épingler et scanner l'image de base (F-12).
 
 **P2 — hygiène**
-7. F-13 → F-20 : version unique, `.dockerignore`, `SECURITY.md`, templates, Dependabot,
+6. F-13 → F-20 : version unique, `.dockerignore`, `SECURITY.md`, templates, Dependabot,
    `.editorconfig`, ADR.
+
+## Suivi
+
+- **2026-11-12 — F-11 résolu.** Dépôt `devmail0561-web/workhub` créé et poussé. Les runners
+  hébergés GitHub étant bloqués par un problème de facturation du compte, la CI a été basculée
+  sur le runner self-hosted du dépôt (`runs-on: [self-hosted, linux, x64]`) et le port du
+  service Postgres déplacé à `55432`. Run `43317081941` : backend, CLI et docker verts.
 
 ## Conclusion
 

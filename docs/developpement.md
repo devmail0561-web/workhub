@@ -75,6 +75,10 @@ Reprise de la DoD du plan, complétée par l'exigence de documentation :
 - **cli** : ruff, pyright, import-linter, pytest.
 - **docker** : validation de la configuration Compose et construction de l'image API.
 
-La CI se déclenche sur `push` vers `main` et sur toute `pull_request`. Elle n'a pas encore été
-exécutée sur GitHub : le dépôt est local et n'a pas de remote (voir la page
-[E0 — Fondations](implementation/E0-fondations.md#limites-connues)).
+La CI se déclenche sur `push` vers `main` et sur toute `pull_request`. Les jobs s'exécutent
+sur le **runner self-hosted** du dépôt (`runs-on: [self-hosted, linux, x64]`), les runners
+hébergés GitHub étant indisponibles sur le compte (blocage de facturation). Le service
+PostgreSQL du job backend publie le port `55432` pour ne pas entrer en conflit avec la stack
+locale (`5432`).
+
+Dernière exécution vérifiée : run `43317081941`, trois jobs verts (backend, CLI, docker).

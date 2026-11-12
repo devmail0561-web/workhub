@@ -24,7 +24,7 @@ locale saine, **avant la première ligne de métier**. C'est l'ordre imposé par
 | `E0-02` | Config Python : uv, ruff, pyright strict, pytest, pre-commit | ✅ | `uv run pytest` + lint passent |
 | `E0-03` | import-linter avec les règles §3.3 + preuve qu'une violation échoue | ✅ | violation volontaire détectée |
 | `E0-04` | Docker Compose Postgres + API + web, healthchecks, `.env.example` | ✅ | `docker compose up` sain (vérifié) |
-| `E0-05` | CI GitHub Actions : lint, types, tests, import-linter, pip-audit, build | ✅ | workflow défini et validé localement |
+| `E0-05` | CI GitHub Actions : lint, types, tests, import-linter, pip-audit, build | ✅ | workflow vert sur le runner self-hosted (run `43317081941`) |
 
 ## Ce qui a été implémenté
 
@@ -113,7 +113,12 @@ externes (`fastapi`, `sqlalchemy`, `workhub`).
 - `docker` : `docker compose config` et `docker build` de l'image API.
 
 Déclencheurs : `push` sur `main` et toute `pull_request`, avec annulation des exécutions
-obsolètes (`concurrency`).
+obsolètes (`concurrency`). Les jobs tournent sur le **runner self-hosted** du dépôt
+(`runs-on: [self-hosted, linux, x64]`) car les runners hébergés GitHub sont bloqués par un
+problème de facturation du compte. Le service PostgreSQL de la CI publie `55432` pour éviter
+tout conflit avec la stack locale (`5432`).
+
+Première exécution réelle et verte : run `43317081941` (backend, CLI et docker).
 
 ## Décisions et écarts par rapport au plan
 
@@ -174,9 +179,9 @@ GET http://localhost:8000/api/v1/health
 
 ## Limites connues
 
-- **CI non exécutée sur GitHub** : le dépôt est local, sans remote. Le workflow est défini et
-  ses étapes sont reproduites localement, mais le déclenchement réel reste à valider après
-  création du dépôt distant.
+- **Runner self-hosted requis** : la CI s'exécute sur le runner du dépôt, car les runners
+  hébergés GitHub sont indisponibles sur le compte (blocage de facturation). Le runner doit
+  rester en ligne pour que les workflows démarrent.
 - **Docker Desktop requis** : `docker compose up` suppose le démon actif. La validation a été
   faite avec Docker 29.9.2 (Docker Desktop 4.86.0).
 - **API sans base** : Postgres tourne mais l'API ne s'y connecte pas encore (pas de SQLAlchemy
