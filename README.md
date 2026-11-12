@@ -44,9 +44,17 @@ docker compose -f deploy/docker-compose.yml up
 
 ## Documentation
 
+- Point d'entrée : [`docs/`](docs/README.md)
+- Installation et démarrage : [`docs/installation.md`](docs/installation.md)
+- Développement, commandes, DoD : [`docs/developpement.md`](docs/developpement.md)
+- Architecture et règles de dépendance : [`docs/architecture.md`](docs/architecture.md)
+- Journal d'implémentation : [`docs/implementation/`](docs/implementation/README.md)
+- Décisions d'architecture : [`docs/adr/`](docs/adr/README.md)
 - Plan de développement et backlog : [`tasks/workhub-plan-developpement.md`](tasks/workhub-plan-developpement.md)
-- Cahier des charges : `docs/plans-de-travail.pdf`
-- Décisions d'architecture : [`docs/adr/`](docs/adr/)
+- Cahier des charges : [`docs/plans-de-travail.pdf`](docs/plans-de-travail.pdf)
+
+L'implémentation est documentée **du début à la fin** : chaque epic dispose d'une page
+(`docs/implementation/E<epic>-<theme>.md`) mise à jour dans la même branche que le code.
 
 ## Licence
 

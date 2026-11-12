@@ -44,6 +44,14 @@ Le dépôt applique un **monolithe modulaire** (Clean Architecture). Les règles
 4. Toute écriture d'intégration produit une ligne d'audit.
 5. OpenAPI à jour + client TS régénéré.
 6. ADR / documentation mis à jour.
+7. Page `docs/implementation/E<epic>-<theme>.md` créée ou mise à jour, avec les commandes de
+   vérification et leurs résultats (voir le [modèle](docs/implementation/TEMPLATE.md)).
+
+## Documentation
+
+L'implémentation est documentée de bout en bout dans [`docs/`](docs/README.md). Une tâche n'est
+pas terminée tant que sa page d'implémentation n'est pas à jour. La documentation décrit l'état
+réel du dépôt et les écarts éventuels par rapport au plan, jamais l'inverse.
 
 ## Commits
 
