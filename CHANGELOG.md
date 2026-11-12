@@ -50,6 +50,7 @@ développement : la version `0.1.0` correspond à l'amorçage, sans release publ
 - Les dépendances du CLI sont désormais auditées (`pip-audit`) en local et en CI.
 - La CI s'exécute sur le runner **self-hosted** du dépôt (runners GitHub hébergés bloqués par
   facturation) et le port du service Postgres est passé à `55432` pour éviter les conflits.
+- Actions GitHub mises à jour (`checkout@v7`, `setup-uv@v7`, runtime Node 24).
 
 ### Notes
 

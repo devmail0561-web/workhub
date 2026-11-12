@@ -85,7 +85,7 @@ git grep -nE "(password|secret|token|api[_-]?key)\s*[:=]"   # secrets
 | F-14 | `.dockerignore` utilise `__pycache__` (non récursif) | préférer `**/__pycache__` |
 | F-15 | pas de `HEALTHCHECK` dans le Dockerfile | couvert par Compose, acceptable pour l'instant |
 | F-16 | pas de `SECURITY.md`, `CODEOWNERS`, template de PR, `.editorconfig` | à ajouter avant collaboration élargie |
-| F-17 | versions d'actions GitHub (`checkout@v4`, `setup-uv@v5`) | à maintenir (Dependabot) |
+| F-17 | versions d'actions GitHub (`checkout@v4`, `setup-uv@v5`) | résolu : `checkout@v7` et `setup-uv@v7` (Node 24) |
 | F-18 | pas encore de tests de contrat ni de permissions | normal à ce stade (aucun endpoint protégé) |
 | F-19 | frontend absent (seulement README + placeholder) | prévu en E0-11 |
 | F-20 | pas d'ADR rédigées | prévu en E0-07 ; décisions structurantes déjà listées |
@@ -160,6 +160,8 @@ CI GitHub (self-hosted)    : run 43317081941 — backend, CLI et docker verts
   hébergés GitHub étant bloqués par un problème de facturation du compte, la CI a été basculée
   sur le runner self-hosted du dépôt (`runs-on: [self-hosted, linux, x64]`) et le port du
   service Postgres déplacé à `55432`. Run `43317081941` : backend, CLI et docker verts.
+- **2026-11-12 — F-17 résolu.** Actions mises à jour vers `checkout@v7` et `setup-uv@v7`
+  (runtime Node 24), supprimant l'avertissement de dépréciation de Node 20.
 
 ## Conclusion
 
