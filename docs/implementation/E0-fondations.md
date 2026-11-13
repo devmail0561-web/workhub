@@ -4,8 +4,8 @@
 |---|---|
 | Epic | `E0` |
 | Jalon | M0 — Fondations |
-| Tâches couvertes | `E0-01` → `E0-10` |
-| Statut | E0-01 → E0-10 terminés ; E0-11 à faire |
+| Tâches couvertes | `E0-01` → `E0-11` |
+| Statut | E0 terminé (E0-01 → E0-11) |
 | Dernière mise à jour | 2026-11-13 |
 | ADR liées | [001 → 009](../adr/README.md) |
 | Commits | `bb7f49b` (documents), `0b82963` (fondations) |
@@ -30,6 +30,7 @@ locale saine, **avant la première ligne de métier**. C'est l'ordre imposé par
 | `E0-08` | Noyau `shared` : `Principal`, erreurs, horloge, ids, pagination, enveloppe d'erreur API | ✅ | importé par les tests des deux premiers modules, 42 tests, couverture 100 % |
 | `E0-09` | Alembic + base de test testcontainers + fixtures | ✅ | migration `upgrade`/`downgrade` vérifiée, 5 tests d'intégration sur vrai Postgres |
 | `E0-10` | Logging structuré + `request_id` + middleware d'erreurs | ✅ | chaque requête produit une ligne JSON avec `request_id`, en-tête `X-Request-ID` |
+| `E0-11` | Squelette frontend : Vite, TS strict, Tailwind, shadcn, TanStack Router/Query, client OpenAPI | ✅ | page `/` appelant `/api/v1/health` avec types générés, servie par Compose sur `:8080` |
 
 ## Ce qui a été implémenté
 
@@ -109,20 +110,20 @@ externes (`fastapi`, `sqlalchemy`, `workhub`).
   le port 8000.
 - `backend/.dockerignore` : exclut `.venv`, caches et tests.
 - `deploy/docker-compose.yml` : `db` (Postgres 16-alpine), `api` (build backend), `web`
-  (Nginx 1.27-alpine servant `deploy/web/`), tous avec healthchecks et `depends_on` sur l'état
-  sain ; volume nommé `pgdata`. `POSTGRES_PASSWORD` est **obligatoire** et les ports sont
-  publiés sur `127.0.0.1` uniquement.
-- `deploy/.env.example` : identifiants Postgres et ports surchargeables.
-- `deploy/web/index.html` : page placeholder en attendant le frontend (E0-11).
+  (build multi-étapes `frontend/Dockerfile` : Node/pnpm puis Nginx, proxy `/api`), tous avec
+  healthchecks et `depends_on` sur l'état sain ; volume nommé `pgdata`.
+  `POSTGRES_PASSWORD` est **obligatoire** et les ports sont publiés sur `127.0.0.1` uniquement.
+- `deploy/.env.example` : identifiants Postgres, ports, `LOG_LEVEL` surchargeables.
 
 ### E0-05 — Intégration continue
 
-`.github/workflows/ci.yml` comporte trois jobs :
+`.github/workflows/ci.yml` comporte quatre jobs :
 
 - `backend` : uv + Python 3.12, `sync --frozen`, ruff lint/format, pyright, import-linter,
   pytest avec service PostgreSQL 16, `pip-audit` ;
 - `cli` : ruff, pyright, import-linter, pytest ;
-- `docker` : `docker compose config` et `docker build` de l'image API.
+- `frontend` : pnpm + Node 20, `install --frozen-lockfile`, `tsc`, Vitest, build Vite ;
+- `docker` : `docker compose config` et `docker build` des images API et web.
 
 Déclencheurs : `push` sur `main` et toute `pull_request`, avec annulation des exécutions
 obsolètes (`concurrency`). Les jobs tournent sur le **runner self-hosted** du dépôt
@@ -261,6 +262,26 @@ Exemple de ligne (une par requête) :
 {"event":"http.request","request_id":"req-42","method":"GET","path":"/api/v1/health","status_code":200,"duration_ms":1.23,"level":"info","timestamp":"2026-11-13T16:00:00.000000Z"}
 ```
 
+### E0-11 — Squelette frontend
+
+- **Vite 8 + React 19 + TypeScript 5.9 strict** (`strict`, `noUncheckedIndexedAccess`,
+  `exactOptionalPropertyTypes`, `noUnusedLocals/Parameters`), alias `@/` vers `src/`.
+- **Tailwind CSS 4** via `@tailwindcss/vite` et **shadcn/ui** initialisé (`components.json`,
+  `cn()`, composant `Button` basé sur Radix Slot et CVA).
+- **TanStack Router** : route typée `/` et layout racine ; **TanStack Query** : clé `health`
+  et bouton de rafraîchissement.
+- **Client OpenAPI généré** : `frontend/openapi.json` (instantané du contrat FastAPI) est
+  converti par `openapi-typescript` en `src/api/schema.d.ts` ; `openapi-fetch` consomme ces
+  types, aucun type de réponse n'est écrit à la main.
+- **Même origine** : en développement, le proxy Vite relaie `/api` vers `localhost:8000` ; en
+  production, Nginx relaie `/api/` vers le service `api`. Pas de CORS à ouvrir.
+- **Image web multi-étapes** (`frontend/Dockerfile`) : build Node/pnpm puis Nginx ; Compose
+  construit l'image et sert l'application sur `127.0.0.1:8080`.
+- **Tests** : Vitest + Testing Library (3 tests : client typé, erreur HTTP, rendu de l'état) ;
+  `tsc --noEmit` et `vite build` passent. Playwright et Monaco restent pour les écrans métier.
+- **Gestionnaire** : pnpm 10 avec `pnpm-lock.yaml` versionné ; `npm` 10.8 échouait sur la
+  résolution des pairs de cet ensemble.
+
 ## Décisions et écarts par rapport au plan
 
 | Sujet | Décision / écart | Raison |
@@ -272,7 +293,9 @@ Exemple de ligne (une par requête) :
 | Dépendance `pip-audit` | ajoutée aux groupes `dev` backend et CLI | l'audit doit être reproductible en local et en CI |
 | Couverture | `pytest-cov`, seuil global 80 % dès maintenant | applique le plan §10 ; le seuil domaine 90 % sera activé avec le premier code de domaine |
 | Image Docker | `uv sync --frozen` + utilisateur non privilégié | build reproductible et surface réduite (F-08/F-04 de l'audit) |
-| Frontend | seulement `README.md` + `src/.gitkeep` | squelette applicatif prévu en E0-11 |
+| Frontend | Vite 8 + React 19 + TypeScript strict, Tailwind 4, shadcn/ui, TanStack Router/Query, client OpenAPI généré | squelette E0-11 ; Playwright/Monaco avec les écrans métier |
+| Gestionnaire frontend | **pnpm 10** (lockfile versionné) | `npm install` échouait sur cet ensemble de dépendances |
+| Origine API | proxy Vite/Nginx, pas de CORS | même origine en dev et en production |
 | Tests | un seul test à ce stade (santé) | pas encore de logique métier ; la couverture montera avec E1+ |
 | Statuts SQL | `text` + `CHECK` plutôt qu'`ENUM` | états encore provisoires, migrations plus simples |
 | Table utilisateur | `app_user` | `user` est un mot réservé PostgreSQL |
@@ -373,6 +396,18 @@ uv run pytest -q             # 65 passed, couverture 100 %
 docker logs workhub-api-1    # une ligne JSON par requête, avec request_id
 ```
 
+Squelette frontend (critère E0-11) :
+
+```bash
+cd frontend
+pnpm install --frozen-lockfile
+pnpm run typecheck           # tsc --noEmit, aucune erreur
+pnpm run test                # 3 tests Vitest
+pnpm run build               # build Vite dans dist/
+curl -fsS http://localhost:8080/api/v1/health
+# {"status":"ok","version":"0.1.0"}
+```
+
 Stack Docker (critère E0-04) :
 
 ```text
@@ -381,6 +416,8 @@ workhub-api-1   Up (healthy)   127.0.0.1:8000->8000/tcp  (User=appuser)
 workhub-web-1   Up (healthy)   127.0.0.1:8080->80/tcp
 
 GET http://localhost:8000/api/v1/health
+{"status":"ok","version":"0.1.0"}
+GET http://localhost:8080/api/v1/health   (via Nginx)
 {"status":"ok","version":"0.1.0"}
 ```
 
@@ -397,10 +434,14 @@ GET http://localhost:8000/api/v1/health
   modèles métier ; l'exception ciblée du contrat sera ajoutée au premier modèle (E1).
 - **Pas d'OpenTelemetry** : traces et métriques restent optionnelles (plan §2.1) ; seuls les
   logs JSON et le `request_id` sont en place.
-- **Pas de squelette frontend** (E0-11) : seule une page statique placeholder est servie.
+- **Frontend minimal** : une seule route et la sonde de santé ; écrans métier, Playwright et
+  Monaco arrivent avec E12/E2+.
+- **Client OpenAPI instantané** : `frontend/openapi.json` est versionné ; il doit être
+  régénéré à chaque évolution du contrat (procédure dans [Développement](../developpement.md)).
 - **Noyau sans persistance** : `shared` fournit les primitives ; la résolution réelle du
   `Principal` et le chargement des scopes arrivent en E1-05.
 
 ## Suites
 
-1. **E0-11** — squelette frontend (Vite/React/TS strict) appelant `/api/v1/health`.
+1. **E1-01** — entité `User`, hash argon2id et amorçage du premier administrateur par le CLI.
+2. **E1-02** — sessions JWT d'accès court + refresh cookie `HttpOnly`, rotation et logout.

@@ -6,8 +6,8 @@
 workhub-plan/
 ├── backend/          # API FastAPI + domaine (package `workhub`)
 ├── cli/              # package `workhub-cli` (HTTP uniquement)
-├── frontend/         # interface React (squelette prévu en E0-11)
-├── deploy/           # docker-compose, .env.example, web statique
+├── frontend/         # interface React (Vite, TanStack Router/Query, client OpenAPI)
+├── deploy/           # docker-compose, .env.example
 ├── docs/             # cette documentation (adr, specs, integrations, implementation)
 ├── tasks/            # plan de développement et backlog
 └── .github/workflows # CI
@@ -33,6 +33,26 @@ La couverture est mesurée à chaque `pytest` (`--cov=workhub`) avec un seuil bl
 activé lorsque le premier code de domaine existera (E0-08/E1).
 
 Le script `pre-commit` enchaîne ruff, pyright et import-linter à chaque commit.
+
+## Commandes frontend
+
+Depuis `frontend/` :
+
+| Commande | Rôle | Attendu |
+|---|---|---|
+| `pnpm install --frozen-lockfile` | installe les dépendances | lockfile respecté |
+| `pnpm run dev` | serveur Vite + proxy `/api` | http://localhost:5173 |
+| `pnpm run typecheck` | TypeScript strict | aucune erreur |
+| `pnpm run test` | Vitest + Testing Library | 3 tests verts |
+| `pnpm run build` | typecheck + build Vite | `dist/` généré |
+| `pnpm run generate:api` | régénère les types depuis `openapi.json` | `src/api/schema.d.ts` à jour |
+
+Régénérer le client après un changement d'API :
+
+```bash
+curl -fsS http://localhost:8000/openapi.json -o frontend/openapi.json
+cd frontend && pnpm run generate:api
+```
 
 ## Commandes CLI
 

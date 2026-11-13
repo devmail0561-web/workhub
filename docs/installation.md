@@ -6,7 +6,8 @@
 |---|---|---|
 | Python | **3.12+** | backend, CLI |
 | [uv](https://docs.astral.sh/uv/) | ≥ 0.8 (testé avec 0.13.0) | gestion des dépendances Python |
-| Node.js | 20+ | frontend (à partir de E0-11) |
+| Node.js | 20.19+ | frontend |
+| pnpm | 10+ | dépendances frontend |
 | Docker Engine + Compose v2 | testé avec Docker 29.9.2 | stack locale (Postgres, API, web) |
 | Git | 2.43+ | versionnement |
 
@@ -55,7 +56,7 @@ Services démarrés :
 |---|---|---|
 | API | http://localhost:8000 | FastAPI |
 | API — santé | http://localhost:8000/api/v1/health | sonde utilisée par Docker/CI |
-| Web | http://localhost:8080 | placeholder statique (Nginx) |
+| Web | http://localhost:8080 | SPA React servie par Nginx, proxy `/api` |
 | PostgreSQL | `localhost:5432` | base de données |
 
 Vérification :
@@ -64,6 +65,17 @@ Vérification :
 docker compose -f deploy/docker-compose.yml ps
 curl -fsS http://localhost:8000/api/v1/health
 # {"status":"ok","version":"0.1.0"}
+```
+
+Le service web est construit depuis `frontend/` (Node + pnpm puis Nginx) ; la page `/` appelle
+la sonde via `http://localhost:8080/api/v1/health`.
+
+## Installation du frontend
+
+```bash
+cd frontend
+pnpm install --frozen-lockfile
+pnpm run dev          # http://localhost:5173, proxy /api vers :8000
 ```
 
 Appliquer les migrations de base :

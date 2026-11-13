@@ -10,6 +10,10 @@ développement : la version `0.1.0` correspond à l'amorçage, sans release publ
 
 ### Added
 
+- **Squelette frontend (E0-11)** : Vite 8 + React 19 + TypeScript strict, Tailwind 4,
+  shadcn/ui, TanStack Router/Query, client OpenAPI généré (`openapi-typescript` +
+  `openapi-fetch`) ; page `/` appelant `/api/v1/health`, proxy même origine (Vite/Nginx),
+  image web multi-étapes, tests Vitest, job CI `frontend`.
 - **Monorepo (E0-01)** : arborescence `backend/`, `cli/`, `frontend/`, `deploy/`,
   `docs/`, `.github/workflows/` ; modules métier en `domain`/`application`/`infrastructure`
   avec une API publique `api.py` ; `README.md`, `CONTRIBUTING.md`, `LICENSE` (MIT),

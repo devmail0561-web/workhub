@@ -13,7 +13,7 @@ Historique de l'implémentation, epic par epic et tâche par tâche. Chaque page
 
 | Epic | Jalon | Page | État |
 |---|---|---|---|
-| **E0** — Fondations | M0 | [E0-fondations.md](E0-fondations.md) | E0-01 → E0-05 terminés |
+| **E0** — Fondations | M0 | [E0-fondations.md](E0-fondations.md) | E0-01 → E0-11 terminés |
 | E1 — IAM | M0 → M2 | — | à venir |
 | E2 — Skills / blobs | M1 | — | à venir |
 | E3 — Projets / missions | M3 | — | à venir |

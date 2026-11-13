@@ -24,7 +24,7 @@ L'application ne contient **aucun LLM** : elle expose des données et des cas d'
 │   └── tests/          # unit / integration / contract / security
 ├── cli/                # client en ligne de commande (HTTP uniquement)
 ├── frontend/           # interface web React
-├── deploy/             # docker-compose, web local ; Caddyfile/sauvegardes à venir
+├── deploy/             # docker-compose et configuration locale ; Caddyfile/sauvegardes à venir
 ├── docs/               # adr / specs / integrations
 └── .github/workflows/  # CI
 ```
@@ -37,7 +37,12 @@ cd backend
 uv sync
 uv run pytest
 
-# Stack locale
+# Frontend (pnpm 10)
+cd frontend
+pnpm install
+pnpm run dev
+
+# Stack locale (API, web construite, Postgres)
 cp deploy/.env.example deploy/.env
 docker compose -f deploy/docker-compose.yml up
 ```

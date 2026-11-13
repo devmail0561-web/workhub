@@ -87,7 +87,7 @@ git grep -nE "(password|secret|token|api[_-]?key)\s*[:=]"   # secrets
 | F-16 | pas de `SECURITY.md`, `CODEOWNERS`, template de PR, `.editorconfig` | à ajouter avant collaboration élargie |
 | F-17 | versions d'actions GitHub (`checkout@v4`, `setup-uv@v5`) | résolu : `checkout@v7` et `setup-uv@v7` (Node 24) |
 | F-18 | pas encore de tests de contrat ni de permissions | normal à ce stade (aucun endpoint protégé) |
-| F-19 | frontend absent (seulement README + placeholder) | prévu en E0-11 |
+| F-19 | frontend absent (seulement README + placeholder) | résolu en E0-11 : Vite/React/TS strict, client OpenAPI, tests et proxy même origine |
 | F-20 | pas d'ADR rédigées | prévu en E0-07 ; décisions structurantes déjà listées |
 
 ## Conformité au plan (E0)

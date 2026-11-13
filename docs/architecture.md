@@ -103,6 +103,20 @@ Précisions d'implémentation :
 - Les migrations sont **synchrones** (déploiement) ; l'application utilise un moteur
   asynchrone.
 
+## Frontend
+
+- **SPA React 19 + TypeScript strict** construite par **Vite 8**, servie par Nginx ; Tailwind 4
+  et composants shadcn/ui copiés dans `frontend/src/components/ui`.
+- **TanStack Router** pour les routes typées et **TanStack Query** pour le cache des données
+  serveur ; aucune donnée métier n'est stockée hors du cache de requêtes.
+- **Contrat API unique** : `openapi-typescript` génère `src/api/schema.d.ts` depuis
+  `frontend/openapi.json` ; `openapi-fetch` utilise ces types. L'instantané OpenAPI est
+  régénéré depuis FastAPI à chaque évolution du contrat.
+- **Même origine** : en développement Vite proxifie `/api` vers l'API ; en production Nginx
+  fait de même vers le service `api`. Pas de CORS.
+- **Tests** : Vitest + Testing Library pour les composants et le client API ; Playwright pour
+  les parcours E2E critiques à partir des écrans métier.
+
 ## Observabilité
 
 - Logs **JSON** via structlog (une ligne par requête) : `event`, `request_id`, `method`, `path`,

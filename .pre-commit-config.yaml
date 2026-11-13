@@ -70,3 +70,10 @@ repos:
         language: system
         pass_filenames: false
         files: ^cli/(src/|pyproject\.toml)
+
+      - id: frontend-typecheck
+        name: frontend — tsc strict
+        entry: bash -c 'cd frontend && pnpm run typecheck'
+        language: system
+        pass_filenames: false
+        files: ^frontend/(src/|package\.json|pnpm-lock\.yaml|tsconfig\.json|vite\.config\.ts|vitest\.config\.ts|openapi\.json)

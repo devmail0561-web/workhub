@@ -106,6 +106,40 @@ jobs:
       - name: Audit des dépendances (pip-audit)
         run: uv run pip-audit
 
+  frontend:
+    name: Frontend (types, tests, build)
+    runs-on: [self-hosted, linux, x64]
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Installer pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.32.1
+
+      - name: Installer Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Installer les dépendances
+        run: pnpm install --frozen-lockfile
+
+      - name: Typage (tsc strict)
+        run: pnpm run typecheck
+
+      - name: Tests (Vitest)
+        run: pnpm run test
+
+      - name: Build (Vite)
+        run: pnpm run build
+
   docker:
     name: Build Docker
     runs-on: [self-hosted, linux, x64]
@@ -118,3 +152,6 @@ jobs:
 
       - name: Construire l'image API
         run: docker build -t workhub-api:ci backend
+
+      - name: Construire l'image web
+        run: docker build -t workhub-web:ci frontend
