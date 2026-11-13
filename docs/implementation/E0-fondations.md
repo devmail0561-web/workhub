@@ -8,7 +8,7 @@
 | Statut | E0 terminé (E0-01 → E0-11) |
 | Dernière mise à jour | 2026-11-13 |
 | ADR liées | [001 → 009](../adr/README.md) |
-| Commits | `bb7f49b` (documents), `0b82963` (fondations) |
+| Commits | `bb7f49b`, `0b82963` (fondations), `29f9a79` (E0-06/07), `17f6fd7` (E0-08), `6d50b68` (E0-09), `ad1a395` (E0-10), `4fe4b22` (E0-11) |
 
 ## Objectif
 
