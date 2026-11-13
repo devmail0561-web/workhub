@@ -57,11 +57,13 @@ autorisé** pour les autres modules. `workhub/__init__.py` expose `__version__ =
 - package `workhub`, `requires-python = ">=3.12"`, build `hatchling` (layout `src/`) ;
 - dépendances d'exécution : `fastapi`, `pydantic`, `pydantic-settings`, `uvicorn[standard]` ;
 - groupe `dev` : `httpx`, `import-linter`, `pip-audit`, `pre-commit`, `pyright`, `pytest`,
-  `pytest-asyncio`, `ruff` ;
+  `pytest-asyncio`, `pytest-cov`, `ruff` ;
 - ruff : cibles `E,W,F,I,UP,B,SIM,RUF`, largeur 100, `known-first-party = ["workhub"]` ;
 - pyright : `typeCheckingMode = "strict"`, Python 3.12, `.venv` local ;
 - pytest : `testpaths = ["tests"]`, `asyncio_mode = "auto"`, `asyncio_default_fixture_loop_scope
-  = "function"`, `pythonpath = ["src"]`.
+  = "function"`, `pythonpath = ["src"]` ;
+- couverture : `--cov=workhub` par défaut, seuil bloquant global **80 %**
+  (`[tool.coverage.report] fail_under`).
 
 **CLI** (`cli/pyproject.toml`) : package séparé `workhub-cli` (`typer`, `httpx`), avec sa propre
 configuration ruff/pyright/pytest et un contrat import-linter (règle 5).
@@ -80,26 +82,31 @@ Les fichiers `uv.lock` de `backend/` et `cli/` sont versionnés pour des builds 
 
 ### E0-03 — Règles d'architecture
 
-Quatre contrats `import-linter` dans `backend/pyproject.toml`, un cinquième dans
+Six contrats `import-linter` dans `backend/pyproject.toml`, un septième dans
 `cli/pyproject.toml` (voir le détail des règles dans [Architecture](../architecture.md#règles-de-dépendance-vérifiées-par-import-linter)) :
 
 1. domaine sans framework ni dépendance vers les couches hautes ;
 2. `application` sans `infrastructure`/`interfaces` ;
-3. indépendance des modules (couplage explicite uniquement) ;
+3. indépendance des modules **métier** (couplage explicite uniquement) ;
 4. `interfaces` ne parlent qu'à `application` ;
-5. le CLI ne dépend pas du package backend.
+5. le CLI ne dépend pas du package backend ;
+6. le noyau `shared` ne dépend d'aucun module métier ;
+7. les modules métier n'importent de `shared` que son API publique.
 
 La configuration active `include_external_packages = true` pour pouvoir interdire des modules
 externes (`fastapi`, `sqlalchemy`, `workhub`).
 
 ### E0-04 — Stack Docker
 
-- `backend/Dockerfile` : image `python:3.12-slim`, installation du package, `uvicorn` sur le
-  port 8000.
+- `backend/Dockerfile` : image `python:3.12-slim`, installation **reproductible** via
+  `uv sync --frozen --no-dev --no-editable` (image `ghcr.io/astral-sh/uv:0.13.0`, `uv.lock`
+  respecté), exécution sous l'utilisateur non privilégié `appuser` (uid 10001), `uvicorn` sur
+  le port 8000.
 - `backend/.dockerignore` : exclut `.venv`, caches et tests.
 - `deploy/docker-compose.yml` : `db` (Postgres 16-alpine), `api` (build backend), `web`
   (Nginx 1.27-alpine servant `deploy/web/`), tous avec healthchecks et `depends_on` sur l'état
-  sain ; volume nommé `pgdata`.
+  sain ; volume nommé `pgdata`. `POSTGRES_PASSWORD` est **obligatoire** et les ports sont
+  publiés sur `127.0.0.1` uniquement.
 - `deploy/.env.example` : identifiants Postgres et ports surchargeables.
 - `deploy/web/index.html` : page placeholder en attendant le frontend (E0-11).
 
@@ -125,10 +132,12 @@ Première exécution réelle et verte : run `43317081941` (backend, CLI et docke
 | Sujet | Décision / écart | Raison |
 |---|---|---|
 | Interpréteur local | Python **3.12.3** système (`/usr/bin/python3.12`), pas de fichier `.python-version` | un `.python-version = 3.12` entrait en conflit avec `pyenv` (3.11.9 seul installé) ; contournement documenté dans [Installation](../installation.md#dépannage) |
-| Règle 3 | contrat `independence` (plus strict que « via `api.py` ») | import-linter n'exprime pas « uniquement via `api` » ; tout couplage futur sera whitelisté explicitement |
+| Règle 3 | contrat `independence` sur les modules **métier** ; `shared` encadré par deux contrats dédiés (6 et 7) | `shared` est le noyau importé par tous ; l'indépendance stricte l'aurait bloqué (F-07 de l'audit) |
 | Règle 5 | contrat porté par `cli/pyproject.toml` | le CLI est un package séparé ; import-linter opère par `root_package` |
 | `readme` du package | `backend/README.md` plutôt que `../README.md` | hatchling exige un README dans le répertoire du projet |
-| Dépendance `pip-audit` | ajoutée au groupe `dev` backend | l'audit doit être reproductible en local et en CI |
+| Dépendance `pip-audit` | ajoutée aux groupes `dev` backend et CLI | l'audit doit être reproductible en local et en CI |
+| Couverture | `pytest-cov`, seuil global 80 % dès maintenant | applique le plan §10 ; le seuil domaine 90 % sera activé avec le premier code de domaine |
+| Image Docker | `uv sync --frozen` + utilisateur non privilégié | build reproductible et surface réduite (F-08/F-04 de l'audit) |
 | Frontend | seulement `README.md` + `src/.gitkeep` | squelette applicatif prévu en E0-11 |
 | Tests | un seul test à ce stade (santé) | pas encore de logique métier ; la couverture montera avec E1+ |
 
@@ -141,8 +150,8 @@ cd backend
 uv run ruff check .            # All checks passed!
 uv run ruff format --check .   # 71 files already formatted
 uv run pyright                 # 0 errors, 0 warnings
-uv run lint-imports            # Contracts: 4 kept, 0 broken.
-uv run pytest -q               # 1 passed
+uv run lint-imports            # Contracts: 6 kept, 0 broken.
+uv run pytest -q               # 1 passed, couverture 100 % (seuil 80 %)
 uv run pip-audit               # No known vulnerabilities found
 ```
 
@@ -161,6 +170,14 @@ Preuve que les contrats bloquent (E0-03) :
 1. Le domaine ne dépend d'aucun framework technique
 workhub.skills.domain is not allowed to import fastapi
 
+# ajout temporaire de `import workhub.shared.domain` dans workhub/skills/application/
+7. Les modules métier n'importent de shared que son API publique
+workhub.skills is not allowed to import workhub.shared.domain
+
+# ajout temporaire de `import workhub.skills` dans workhub/shared/
+6. Le noyau shared ne dépend d'aucun module métier
+workhub.shared is not allowed to import workhub.skills
+
 # ajout temporaire de `import workhub` dans workhub_cli/
 5. Le CLI ne dépend pas du package backend
 workhub_cli is not allowed to import workhub
@@ -169,9 +186,9 @@ workhub_cli is not allowed to import workhub
 Stack Docker (critère E0-04) :
 
 ```text
-workhub-db-1    Up (healthy)
-workhub-api-1   Up (healthy)
-workhub-web-1   Up (healthy)
+workhub-db-1    Up (healthy)   127.0.0.1:5432->5432/tcp
+workhub-api-1   Up (healthy)   127.0.0.1:8000->8000/tcp  (User=appuser)
+workhub-web-1   Up (healthy)   127.0.0.1:8080->80/tcp
 
 GET http://localhost:8000/api/v1/health
 {"status":"ok","version":"0.1.0"}

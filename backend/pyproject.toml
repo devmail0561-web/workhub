@@ -21,6 +21,7 @@ dev = [
     "pyright>=1.1",
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
     "ruff>=0.8",
 ]
 
@@ -65,7 +66,16 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 pythonpath = ["src"]
-addopts = "-ra"
+addopts = "-ra --cov=workhub --cov-report=term-missing"
+
+[tool.coverage.run]
+source = ["workhub"]
+branch = true
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+skip_covered = true
 
 [tool.importlinter]
 root_package = "workhub"
@@ -90,10 +100,9 @@ source_modules = ["workhub.*.application"]
 forbidden_modules = ["workhub.*.infrastructure", "workhub.interfaces"]
 
 [[tool.importlinter.contracts]]
-name = "3. Indépendance des modules (tout couplage doit être déclaré explicitement)"
+name = "3. Indépendance des modules métier (tout couplage doit être déclaré explicitement)"
 type = "independence"
 modules = [
-    "workhub.shared",
     "workhub.iam",
     "workhub.skills",
     "workhub.projects",
@@ -112,3 +121,43 @@ name = "4. Les interfaces ne parlent qu'à la couche application"
 type = "forbidden"
 source_modules = ["workhub.interfaces.rest", "workhub.interfaces.mcp"]
 forbidden_modules = ["workhub.*.domain", "workhub.*.infrastructure"]
+
+[[tool.importlinter.contracts]]
+name = "6. Le noyau shared ne dépend d'aucun module métier"
+type = "forbidden"
+source_modules = ["workhub.shared"]
+forbidden_modules = [
+    "workhub.iam",
+    "workhub.skills",
+    "workhub.projects",
+    "workhub.plans",
+    "workhub.competencies",
+    "workhub.execution",
+    "workhub.knowledge",
+    "workhub.tools",
+    "workhub.proposals",
+    "workhub.integrations",
+    "workhub.audit",
+]
+
+[[tool.importlinter.contracts]]
+name = "7. Les modules métier n'importent de shared que son API publique"
+type = "forbidden"
+source_modules = [
+    "workhub.iam",
+    "workhub.skills",
+    "workhub.projects",
+    "workhub.plans",
+    "workhub.competencies",
+    "workhub.execution",
+    "workhub.knowledge",
+    "workhub.tools",
+    "workhub.proposals",
+    "workhub.integrations",
+    "workhub.audit",
+]
+forbidden_modules = [
+    "workhub.shared.domain",
+    "workhub.shared.application",
+    "workhub.shared.infrastructure",
+]

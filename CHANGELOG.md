@@ -51,6 +51,11 @@ développement : la version `0.1.0` correspond à l'amorçage, sans release publ
 - La CI s'exécute sur le runner **self-hosted** du dépôt (runners GitHub hébergés bloqués par
   facturation) et le port du service Postgres est passé à `55432` pour éviter les conflits.
 - Actions GitHub mises à jour (`checkout@v7`, `setup-uv@v7`, runtime Node 24).
+- Le contrat d'architecture 3 ne s'applique qu'aux modules métier ; deux contrats dédiés
+  encadrent le noyau `shared` (règles 6 et 7).
+- Couverture de tests mesurée et bloquante : `pytest-cov`, seuil global 80 %.
+- Image Docker construite de façon reproductible avec `uv sync --frozen` (uv `0.13.0`).
+- Ports de développement liés à `127.0.0.1` et `POSTGRES_PASSWORD` désormais obligatoire.
 
 ### Notes
 

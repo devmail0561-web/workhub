@@ -15,6 +15,7 @@ __pycache__/
 .pyright/
 .coverage
 .coverage.*
+coverage.xml
 htmlcov/
 dist/
 build/

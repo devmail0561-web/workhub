@@ -42,9 +42,12 @@ ne parle à WorkHub que par HTTP. Cette contrainte est vérifiée par `import-li
 ## Lancer la stack locale
 
 ```bash
-cp deploy/.env.example deploy/.env     # ajuster les identifiants si besoin
+cp deploy/.env.example deploy/.env     # POSTGRES_PASSWORD est obligatoire
 docker compose -f deploy/docker-compose.yml up -d --build
 ```
+
+`POSTGRES_PASSWORD` n'a pas de valeur par défaut : Compose refuse de démarrer tant qu'il n'est
+pas défini dans `deploy/.env`. Les ports sont publiés sur `127.0.0.1` uniquement (accès local).
 
 Services démarrés :
 

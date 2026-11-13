@@ -19,12 +19,16 @@ Depuis `backend/` :
 
 | Commande | Rôle | Attendu |
 |---|---|---|
-| `uv run pytest` | tests | tous verts |
+| `uv run pytest` | tests + couverture (seuil 80 % global) | tous verts, seuil atteint |
 | `uv run ruff check .` | lint | `All checks passed!` |
 | `uv run ruff format --check .` | format | aucun fichier à reformater |
 | `uv run pyright` | typage strict | `0 errors` |
 | `uv run lint-imports` | règles d'architecture | tous les contrats `KEPT` |
 | `uv run pip-audit` | vulnérabilités des dépendances | `No known vulnerabilities found` |
+
+La couverture est mesurée à chaque `pytest` (`--cov=workhub`) avec un seuil bloquant de 80 %
+(`[tool.coverage.report] fail_under`). Le seuil spécifique du domaine (≥ 90 %, plan §10) sera
+activé lorsque le premier code de domaine existera (E0-08/E1).
 
 Le script `pre-commit` enchaîne ruff, pyright et import-linter à chaque commit.
 
@@ -47,7 +51,7 @@ Depuis `cli/` : `uv run pytest`, `uv run ruff check .`, `uv run ruff format --ch
 
 Reprise de la DoD du plan, complétée par l'exigence de documentation :
 
-1. CI verte (lint, format, typage, `import-linter`, tests, `pip-audit`).
+1. CI verte (lint, format, typage, `import-linter`, tests avec seuil de couverture, `pip-audit`).
 2. Tests passants + test de permission pour tout endpoint.
 3. Migration Alembic réversible (dès E0-09).
 4. Toute écriture d'intégration produit une ligne d'audit.

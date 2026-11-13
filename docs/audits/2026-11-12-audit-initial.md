@@ -5,7 +5,7 @@
 | Date | 2026-11-12 |
 | Périmètre | dépôt complet, commit `b4bcf35` + corrections de l'audit |
 | Référentiels | [plan de développement](../../tasks/workhub-plan-developpement.md), [architecture](../architecture.md), DoD |
-| Verdict | **Fondations saines et fonctionnelles** ; 7 défauts corrigés, 5 risques moyens et 8 points mineurs documentés |
+| Verdict | **Fondations saines et fonctionnelles** ; constats élevés et moyens corrigés (sauf F-12), 7 points mineurs restants |
 
 ## Résumé exécutif
 
@@ -66,15 +66,15 @@ git grep -nE "(password|secret|token|api[_-]?key)\s*[:=]"   # secrets
 | F-05 | les dépendances du CLI n'étaient pas auditées (`pip-audit` absent du groupe dev et du job CI `cli`) | `pip-audit` ajouté à `cli/pyproject.toml` et au job `cli` de la CI |
 | F-06 | le README annonçait **Caddy** alors que le web local utilise **Nginx** | README corrigé : Nginx local, Caddy pour TLS/production à venir |
 | F-11 | CI jamais exécutée (pas de remote ; runners GitHub hébergés bloqués par facturation) | dépôt `devmail0561-web/workhub` poussé ; workflows basculés sur le runner self-hosted ; run `43317081941` vert (backend, CLI, docker) |
+| F-07 | contrat `independence` interdisant aussi l'import du noyau `shared` | contrat 3 limité aux modules métier ; contrats 6 et 7 encadrent `shared` (API publique uniquement) ; violations testées |
+| F-08 | image Docker construite avec `pip install .` (ignore `uv.lock`) | Dockerfile basé sur `uv sync --frozen --no-dev --no-editable` ; build vérifié |
+| F-09 | aucune couverture de tests | `pytest-cov` + seuil global bloquant 80 % ; `pytest` mesure 100 % à ce stade |
+| F-10 | ports sur `0.0.0.0` et mot de passe Postgres par défaut | ports liés à `127.0.0.1` ; `POSTGRES_PASSWORD` obligatoire (Compose refuse de démarrer sans) |
 
 ### Moyen — ouverts (recommandations)
 
 | ID | Risque | Impact | Recommandation |
 |---|---|---|---|
-| F-07 | Le contrat 3 (`independence`) est **plus strict** que la règle « échange via `workhub.<module>.api` » et interdit aussi l'import du noyau `workhub.shared` | faux positifs dès E0-08 (le noyau sera importé par tous les modules) | whitelister explicitement les imports autorisés via `ignore_imports`, ou retirer `shared` de l'indépendance et encadrer ses internals par un contrat dédié |
-| F-08 | L'image Docker fait `pip install .` : les versions résolues ignorent `uv.lock` | build non reproductible, dérive possible entre CI et prod | construire avec `uv sync --frozen` (ou `uv pip install --frozen`) dans le Dockerfile |
-| F-09 | Aucune mesure de couverture ; le plan §10 impose ≥ 90 % (domaine) et ≥ 80 % (global) | seuils non appliqués | ajouter `pytest-cov` et un seuil bloquant en CI avant le début de E1 |
-| F-10 | Ports publiés sur `0.0.0.0` ; mot de passe Postgres par défaut `workhub` si `.env` absent | exposition locale/réseau et identifiants faibles en dev | lier les ports à `127.0.0.1` et rendre `POSTGRES_PASSWORD` obligatoire (`${POSTGRES_PASSWORD:?…}`) |
 | F-12 | Image de base non épinglée par digest, pas de scan d'image ni de SBOM | surface d'approvisionnement non maîtrisée | épingler `python:3.12-slim@sha256:…`, ajouter Trivy/Grype en CI |
 
 ### Faible — ouverts
@@ -82,7 +82,7 @@ git grep -nE "(password|secret|token|api[_-]?key)\s*[:=]"   # secrets
 | ID | Constat | Note |
 |---|---|---|
 | F-13 | version `0.1.0` dupliquée dans deux `pyproject.toml` et `workhub/__init__.py` | risque de dérive ; envisager une version dynamique depuis les métadonnées |
-| F-14 | `.dockerignore` utilise `__pycache__` (non récursif) | préférer `**/__pycache__` |
+| F-14 | `.dockerignore` utilise `__pycache__` (non récursif) | résolu : `**/__pycache__`, caches de test et couverture exclus |
 | F-15 | pas de `HEALTHCHECK` dans le Dockerfile | couvert par Compose, acceptable pour l'instant |
 | F-16 | pas de `SECURITY.md`, `CODEOWNERS`, template de PR, `.editorconfig` | à ajouter avant collaboration élargie |
 | F-17 | versions d'actions GitHub (`checkout@v4`, `setup-uv@v5`) | résolu : `checkout@v7` et `setup-uv@v7` (Node 24) |
@@ -110,8 +110,8 @@ logging, frontend.
 | `ruff check` | `All checks passed!` | `All checks passed!` |
 | `ruff format --check` | 71 fichiers déjà formatés | 3 fichiers déjà formatés |
 | `pyright` (strict) | 0 erreur | 0 erreur |
-| `lint-imports` | 4 contrats `KEPT` | 1 contrat `KEPT` |
-| `pytest` | 1 test passé | 1 test passé |
+| `lint-imports` | 6 contrats `KEPT` | 1 contrat `KEPT` |
+| `pytest` | 1 test passé, couverture 100 % (seuil 80 %) | 1 test passé |
 | `pip-audit` | aucune vulnérabilité connue | aucune vulnérabilité connue |
 | `uv lock --check` | OK | OK |
 
@@ -142,16 +142,13 @@ CI GitHub (self-hosted)    : run 43317081941 — backend, CLI et docker verts
 ## Recommandations priorisées
 
 **P0 — avant E1**
-1. Trancher F-07 (contrat d'indépendance vs noyau `shared`) avant d'écrire le noyau.
-2. Ajouter la couverture et son seuil en CI (F-09).
+Aucune : F-07 (contrat/noyau) et F-09 (couverture) sont résolus.
 
 **P1 — avant M1**
-3. Rendre l'image reproductible via `uv.lock` (F-08).
-4. Durcir la surface réseau de développement (F-10).
-5. Épingler et scanner l'image de base (F-12).
+1. Épingler et scanner l'image de base (F-12).
 
 **P2 — hygiène**
-6. F-13 → F-20 : version unique, `.dockerignore`, `SECURITY.md`, templates, Dependabot,
+2. F-13 → F-20 : version unique, `.dockerignore`, `SECURITY.md`, templates, Dependabot,
    `.editorconfig`, ADR.
 
 ## Suivi
@@ -162,11 +159,20 @@ CI GitHub (self-hosted)    : run 43317081941 — backend, CLI et docker verts
   service Postgres déplacé à `55432`. Run `43317081941` : backend, CLI et docker verts.
 - **2026-11-12 — F-17 résolu.** Actions mises à jour vers `checkout@v7` et `setup-uv@v7`
   (runtime Node 24), supprimant l'avertissement de dépréciation de Node 20.
+- **2026-11-12 — F-07 résolu.** Contrat 3 limité aux modules métier ; contrats 6 (le noyau
+  `shared` ne dépend d'aucun module métier) et 7 (les modules métier n'importent de `shared` que
+  son API publique). Violations testées puis retirées.
+- **2026-11-12 — F-08 résolu.** Dockerfile construit avec `uv sync --frozen` (image uv épinglée
+  `0.13.0`), build et health vérifiés.
+- **2026-11-12 — F-09 résolu.** `pytest-cov` ajouté, seuil global 80 % bloquant dans la config
+  pytest ; couverture mesurée à 100 % à ce stade. Le seuil domaine 90 % sera activé avec E0-08/E1.
+- **2026-11-12 — F-10 résolu.** Ports liés à `127.0.0.1` ; `POSTGRES_PASSWORD` obligatoire
+  (Compose échoue explicitement s'il manque).
 
 ## Conclusion
 
 Les fondations sont **validées** : outillage, règles d'architecture, stack locale et
-documentation sont cohérents et vérifiés. Le défaut majeur (`pre-commit` inopérant) est corrigé.
-Les risques restants sont connus, chiffrés et planifiés ; aucun ne bloque la poursuite vers
-**E0-06** (modèle de données) et **E0-07** (ADR), sous réserve de traiter F-07 avant **E0-08**
-(noyau `shared`).
+documentation sont cohérents et vérifiés. Le défaut majeur (`pre-commit` inopérant) est corrigé,
+ainsi que l'ensemble des constats élevés et moyens hormis F-12. La poursuite vers **E0-06**
+(modèle de données) et **E0-07** (ADR) est débloquée, y compris **E0-08** (noyau `shared`) grâce
+au nouveau contrat 6/7.

@@ -5,12 +5,12 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-workhub}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-workhub}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Définir POSTGRES_PASSWORD dans deploy/.env}
       POSTGRES_DB: ${POSTGRES_DB:-workhub}
     volumes:
       - pgdata:/var/lib/postgresql/data
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-workhub} -d ${POSTGRES_DB:-workhub}"]
       interval: 5s
@@ -23,12 +23,12 @@ services:
       context: ../backend
     environment:
       WORKHUB_ENV: ${WORKHUB_ENV:-development}
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-workhub}:${POSTGRES_PASSWORD:-workhub}@db:5432/${POSTGRES_DB:-workhub}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-workhub}:${POSTGRES_PASSWORD:?Définir POSTGRES_PASSWORD dans deploy/.env}@db:5432/${POSTGRES_DB:-workhub}
     depends_on:
       db:
         condition: service_healthy
     ports:
-      - "${API_PORT:-8000}:8000"
+      - "127.0.0.1:${API_PORT:-8000}:8000"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
       interval: 10s
@@ -44,7 +44,7 @@ services:
       api:
         condition: service_healthy
     ports:
-      - "${WEB_PORT:-8080}:80"
+      - "127.0.0.1:${WEB_PORT:-8080}:80"
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost/index.html"]
       interval: 10s

@@ -53,17 +53,23 @@ Les règles sont exécutées à chaque CI via `uv run lint-imports` (backend et 
 |---|---|---|---|
 | 1 | `domain` n'importe ni FastAPI, ni SQLAlchemy, ni application/infrastructure/interfaces | `forbidden` | `backend` |
 | 2 | `application` n'importe pas `infrastructure` ni `interfaces` | `forbidden` | `backend` |
-| 3 | Les modules ne dépendent pas les uns des autres (tout couplage doit être déclaré) | `independence` | `backend` |
+| 3 | Les modules **métier** sont indépendants (tout couplage doit être déclaré) | `independence` | `backend` |
 | 4 | `interfaces.rest` et `interfaces.mcp` ne parlent qu'à `application` | `forbidden` | `backend` |
 | 5 | `cli` ne dépend pas du package backend | `forbidden` | `cli` |
+| 6 | Le noyau `shared` ne dépend d'aucun module métier | `forbidden` | `backend` |
+| 7 | Les modules métier n'importent de `shared` que son API publique | `forbidden` | `backend` |
 
 Précisions d'implémentation :
 
 - **Règle 3** : `import-linter` n'exprime pas nativement « importer uniquement via `api.py` ».
-  Le contrat `independence` est donc **plus strict** : aucun import croisé n'est autorisé par
-  défaut. Quand un module devra appeler l'API publique d'un autre, l'import sera **whitelisté
-  explicitement** dans le contrat (`ignore_imports`), ce qui rend tout couplage visible en
-  revue.
+  Le contrat `independence` est donc **plus strict** : aucun import croisé entre modules métier
+  n'est autorisé par défaut. Quand un module devra appeler l'API publique d'un autre, l'import
+  sera **whitelisté explicitement** dans le contrat (`ignore_imports`), ce qui rend tout
+  couplage visible en revue.
+- **Noyau `shared`** : il est volontairement **exclu** de l'indépendance, car il est conçu pour
+  être utilisé par tous les modules. Deux contrats dédiés encadrent cette exception : `shared`
+  ne dépend d'aucun module métier (règle 6) et les modules métier ne peuvent l'importer que par
+  son API publique, jamais par `domain`/`application`/`infrastructure` (règle 7).
 - **Règle 5** : le CLI étant un package séparé (`workhub_cli`), la règle est portée par un
   contrat dans `cli/pyproject.toml`, avec `include_external_packages = true` pour pouvoir
   interdire le module externe `workhub`.
