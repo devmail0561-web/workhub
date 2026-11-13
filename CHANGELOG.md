@@ -26,6 +26,9 @@ développement : la version `0.1.0` correspond à l'amorçage, sans release publ
   healthchecks, `backend/Dockerfile`, `deploy/.env.example`, page web placeholder.
 - **Intégration continue (E0-05)** : workflow GitHub Actions avec jobs `backend` (ruff, pyright,
   import-linter, pytest + service Postgres, pip-audit), `cli` et `docker`.
+- **Noyau partagé (E0-08)** : `Principal` et scopes, hiérarchie d'erreurs métier, horloge
+  injectable UTC, génération d'UUID, pagination bornée et enveloppe d'erreur REST unique ;
+  42 tests, couverture 100 %.
 - **ADR 001 → 009 (E0-07)** : monolithe modulaire, blobs SHA-256, manifeste/empreinte,
   identité et scopes, MCP adaptateur, brouillons/versions, plans, archivage et concurrence
   optimiste ; index dans [`docs/adr/`](docs/adr/README.md).

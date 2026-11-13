@@ -70,11 +70,26 @@ Précisions d'implémentation :
   être utilisé par tous les modules. Deux contrats dédiés encadrent cette exception : `shared`
   ne dépend d'aucun module métier (règle 6) et les modules métier ne peuvent l'importer que par
   son API publique, jamais par `domain`/`application`/`infrastructure` (règle 7).
+- **Interfaces et noyau** : les interfaces peuvent importer `workhub.shared.api` (types
+  transverses : `Principal`, erreurs, pagination) ; une exception `ignore_imports` ciblée évite
+  que le réexport transitif de `shared.domain` ne déclenche la règle 4. L'accès direct aux
+  internals de `shared` reste interdit.
 - **Règle 5** : le CLI étant un package séparé (`workhub_cli`), la règle est portée par un
   contrat dans `cli/pyproject.toml`, avec `include_external_packages = true` pour pouvoir
   interdire le module externe `workhub`.
 - Les contrats utilisent des jokers (`workhub.*.domain`) pour couvrir tous les modules sans
   duplication : un nouveau module est automatiquement soumis aux règles 1, 2 et 4.
+
+## Noyau partagé (`workhub.shared.api`)
+
+| Primitive | Usage |
+|---|---|
+| `Principal`, `PrincipalType` | identité unifiée (utilisateur, intégration, système) et scopes |
+| `WorkHubError` + sous-classes | erreurs métier à code stable, sans dépendance HTTP |
+| `Clock`, `SystemClock` | temps injectable, UTC et timezone-aware |
+| `new_id` | UUID v4 générés en application |
+| `Page`, `PageRequest`, `paginate` | pagination bornée et navigation |
+| `install_error_handlers` (interface REST) | enveloppe JSON unique `{"error": {...}}` |
 
 ## Frontières et dépendances externes
 

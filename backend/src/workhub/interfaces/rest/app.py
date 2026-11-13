@@ -3,8 +3,10 @@
 from fastapi import FastAPI
 
 from workhub import __version__
+from workhub.interfaces.rest.errors import install_error_handlers
 
 app = FastAPI(title="WorkHub API", version=__version__)
+install_error_handlers(app)
 
 
 @app.get("/api/v1/health")

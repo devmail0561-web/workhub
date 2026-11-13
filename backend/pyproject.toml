@@ -121,6 +121,8 @@ name = "4. Les interfaces ne parlent qu'à la couche application"
 type = "forbidden"
 source_modules = ["workhub.interfaces.rest", "workhub.interfaces.mcp"]
 forbidden_modules = ["workhub.*.domain", "workhub.*.infrastructure"]
+# Le noyau shared est autorisé via son api.py (réexporte des types de son domaine).
+ignore_imports = ["workhub.shared.api -> workhub.shared.domain.*"]
 
 [[tool.importlinter.contracts]]
 name = "6. Le noyau shared ne dépend d'aucun module métier"

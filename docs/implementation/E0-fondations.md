@@ -4,8 +4,8 @@
 |---|---|
 | Epic | `E0` |
 | Jalon | M0 — Fondations |
-| Tâches couvertes | `E0-01` → `E0-07` |
-| Statut | E0-01 → E0-07 terminés ; E0-08 → E0-11 à faire |
+| Tâches couvertes | `E0-01` → `E0-08` |
+| Statut | E0-01 → E0-08 terminés ; E0-09 → E0-11 à faire |
 | Dernière mise à jour | 2026-11-13 |
 | ADR liées | [001 → 009](../adr/README.md) |
 | Commits | `bb7f49b` (documents), `0b82963` (fondations) |
@@ -27,6 +27,7 @@ locale saine, **avant la première ligne de métier**. C'est l'ordre imposé par
 | `E0-05` | CI GitHub Actions : lint, types, tests, import-linter, pip-audit, build | ✅ | workflow vert sur le runner self-hosted (run `43317081941`) |
 | `E0-06` | Modèle de données v0 : diagramme + DDL des tables MVP | ✅ | DDL appliqué sur Postgres 16, 12 scénarios d'invariants validés ([schéma](../specs/schema-v0.md)) |
 | `E0-07` | ADR 001 → 009 | ✅ | 9 ADR acceptées et indexées dans [docs/adr](../adr/README.md) |
+| `E0-08` | Noyau `shared` : `Principal`, erreurs, horloge, ids, pagination, enveloppe d'erreur API | ✅ | importé par les tests des deux premiers modules, 42 tests, couverture 100 % |
 
 ## Ce qui a été implémenté
 
@@ -168,6 +169,44 @@ Neuf ADR courtes ont été rédigées et acceptées, une par décision structura
 Les ADR 010 à 012 restent à rédiger avec leurs epics (E14/E15) et sont listées comme telles
 dans l'index.
 
+### E0-08 — Noyau partagé `shared`
+
+Le noyau est le seul module conçu pour être importé par tous les autres. Il expose une API
+publique stable via `workhub.shared.api` (règle 7) et ne dépend d'aucun module métier (règle 6).
+
+| Élément | Fichier | Rôle |
+|---|---|---|
+| `Principal`, `PrincipalType` | `shared/domain/principal.py` | identité unifiée (humain, intégration, système) + scopes et jokers `*` / `skills:*` |
+| `WorkHubError` et sous-classes | `shared/domain/errors.py` | codes stables : `validation_error`, `not_found`, `conflict`, `precondition_failed`, etc. |
+| `Clock`, `SystemClock` | `shared/domain/clock.py` | horloge injectable, toujours `timezone-aware` en UTC |
+| `new_id`, `IdFactory` | `shared/domain/ids.py` | UUID v4 générés en application |
+| `Page`, `PageRequest`, `paginate` | `shared/domain/pagination.py` | pagination bornée (`limit` 1–100, `offset ≥ 0`), navigation |
+| `install_error_handlers` | `interfaces/rest/errors.py` | enveloppe JSON unique des erreurs |
+
+Enveloppe d'erreur REST :
+
+```json
+{"error": {"code": "not_found", "message": "Skill absente", "details": {"slug": "inconnue"}, "request_id": null}}
+```
+
+| Code | Statut HTTP |
+|---|---|
+| `validation_error` | 422 |
+| `authentication_required` | 401 |
+| `permission_denied` | 403 |
+| `not_found` | 404 |
+| `conflict` | 409 |
+| `precondition_failed` | 412 |
+| `rate_limited` | 429 |
+| `internal_error` | 500 |
+
+Les erreurs de validation FastAPI (`RequestValidationError`) sont converties dans la même
+enveloppe. Le `request_id` est déjà présent dans le contrat et sera alimenté par le middleware
+de E0-10.
+
+Le contrat 4 autorise explicitement le noyau via `ignore_imports` (`shared.api` réexporte des
+types de `shared.domain`) tout en continuant d'interdire tout accès direct aux internals.
+
 ## Décisions et écarts par rapport au plan
 
 | Sujet | Décision / écart | Raison |
@@ -247,6 +286,17 @@ docs/adr/004-identite-principal.md       docs/adr/009-concurrence-etag.md
 docs/adr/005-mcp-adaptateur.md           index à jour (9 acceptées, 3 à venir)
 ```
 
+Noyau partagé et enveloppe d'erreur (critère E0-08) :
+
+```bash
+cd backend
+uv run ruff check .          # All checks passed!
+uv run ruff format --check . # 84 files already formatted
+uv run pyright               # 0 errors, 0 warnings
+uv run lint-imports          # Contracts: 6 kept, 0 broken.
+uv run pytest -q             # 42 passed, couverture 100 %
+```
+
 Stack Docker (critère E0-04) :
 
 ```text
@@ -269,10 +319,11 @@ GET http://localhost:8000/api/v1/health
   ni d'Alembic) ; c'est l'objet de E0-09.
 - **DDL non encore migré** : `schema-v0.sql` est la référence ; Alembic l'intégrera en E0-09.
 - **Pas de squelette frontend** (E0-11) : seule une page statique placeholder est servie.
+- **Noyau sans persistance** : `shared` fournit les primitives ; la résolution réelle du
+  `Principal` et le chargement des scopes arrivent en E1-05.
 
 ## Suites
 
-1. **E0-08** — noyau `shared` (`Principal`, erreurs, horloge, ids, pagination).
-2. **E0-09** — Alembic + testcontainers pour les tests d'intégration Postgres.
-3. **E0-10** — logging structuré + `request_id` + middleware d'erreurs.
-4. **E0-11** — squelette frontend (Vite/React/TS strict) appelant `/api/v1/health`.
+1. **E0-09** — Alembic + testcontainers pour les tests d'intégration Postgres.
+2. **E0-10** — logging structuré + `request_id` + middleware d'erreurs.
+3. **E0-11** — squelette frontend (Vite/React/TS strict) appelant `/api/v1/health`.
