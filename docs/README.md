@@ -17,6 +17,7 @@ Cette documentation décrit **ce qui est implémenté, comment le faire tourner,
 ## Documents de référence du projet
 
 - [Plan de développement et backlog](../tasks/workhub-plan-developpement.md)
+- [Schéma de données v0](specs/schema-v0.md) — diagrammes, tables et invariants SQL
 - [Cahier des charges (PDF)](plans-de-travail.pdf)
 - [Guide de contribution](../CONTRIBUTING.md)
 

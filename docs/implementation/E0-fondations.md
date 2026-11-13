@@ -4,10 +4,10 @@
 |---|---|
 | Epic | `E0` |
 | Jalon | M0 — Fondations |
-| Tâches couvertes | `E0-01` → `E0-05` |
-| Statut | E0-01 → E0-05 terminés ; E0-06 → E0-11 à faire |
-| Dernière mise à jour | 2026-11-12 |
-| ADR liées | aucune encore (ADR 001 à rédiger en E0-07) |
+| Tâches couvertes | `E0-01` → `E0-07` |
+| Statut | E0-01 → E0-07 terminés ; E0-08 → E0-11 à faire |
+| Dernière mise à jour | 2026-11-13 |
+| ADR liées | [001 → 009](../adr/README.md) |
 | Commits | `bb7f49b` (documents), `0b82963` (fondations) |
 
 ## Objectif
@@ -25,6 +25,8 @@ locale saine, **avant la première ligne de métier**. C'est l'ordre imposé par
 | `E0-03` | import-linter avec les règles §3.3 + preuve qu'une violation échoue | ✅ | violation volontaire détectée |
 | `E0-04` | Docker Compose Postgres + API + web, healthchecks, `.env.example` | ✅ | `docker compose up` sain (vérifié) |
 | `E0-05` | CI GitHub Actions : lint, types, tests, import-linter, pip-audit, build | ✅ | workflow vert sur le runner self-hosted (run `43317081941`) |
+| `E0-06` | Modèle de données v0 : diagramme + DDL des tables MVP | ✅ | DDL appliqué sur Postgres 16, 12 scénarios d'invariants validés ([schéma](../specs/schema-v0.md)) |
+| `E0-07` | ADR 001 → 009 | ✅ | 9 ADR acceptées et indexées dans [docs/adr](../adr/README.md) |
 
 ## Ce qui a été implémenté
 
@@ -127,6 +129,45 @@ tout conflit avec la stack locale (`5432`).
 
 Première exécution réelle et verte : run `43317081941` (backend, CLI et docker).
 
+### E0-06 — Modèle de données v0
+
+Livrable : [`docs/specs/schema-v0.md`](../specs/schema-v0.md) (diagrammes Mermaid, inventaire et
+justification) et [`docs/specs/schema-v0.sql`](../specs/schema-v0.sql) (DDL exécutable), plus
+[`schema-v0.verify.sql`](../specs/schema-v0.verify.sql) qui prouve les invariants.
+
+- **29 tables** couvrant les entités critiques du plan §4 : identité/intégrations, projets et
+  missions (squelette), Skills/blobs/versions, plans de travail, audit/exécution, outils,
+  exigences, propositions et profil technique de projet.
+- **16 triggers** garantissent en base l'immuabilité des versions, fichiers, blobs,
+  instantanés et du journal d'audit, ainsi que les machines à états (versions, propositions) et
+  le gel de `template_version_id`.
+- **Contraintes structurelles** : `UNIQUE(skill_id, semver)`, FK composites
+  `(version_id, skill_id)` pour l'épinglage/déploiement, `CHECK` de forme sur les exigences,
+  hash et taille des blobs vérifiés, chemins de fichiers sûrs, exactement une cible par
+  instance de plan.
+- Les champs complets de `project`/`mission`, les rôles/compétences, les livrables et le
+  knowledge sont **volontairement différés** (E3/E5/E9/E10), avec les points d'extension
+  documentés.
+
+### E0-07 — Décisions d'architecture (ADR 001 → 009)
+
+Neuf ADR courtes ont été rédigées et acceptées, une par décision structurante du plan §3.4 :
+
+| ADR | Décision |
+|---|---|
+| [001](../adr/001-monolithe-modulaire.md) | monolithe modulaire, 7 contrats `import-linter` |
+| [002](../adr/002-blobs-postgres.md) | blobs dans PostgreSQL, adressage SHA-256, déduplication |
+| [003](../adr/003-manifeste-empreinte.md) | manifeste JSON canonique, empreinte incluant `requirements` |
+| [004](../adr/004-identite-principal.md) | `Principal`, jetons hachés, scopes, moindre privilège |
+| [005](../adr/005-mcp-adaptateur.md) | MCP adaptateur mince, lecture d'abord |
+| [006](../adr/006-brouillons-versions.md) | brouillons mutables / versions immuables |
+| [007](../adr/007-plans-template-instance.md) | template → version → instance → overrides |
+| [008](../adr/008-suppression-archivage.md) | archivage par défaut, suppression physique exceptionnelle |
+| [009](../adr/009-concurrence-etag.md) | verrouillage optimiste `ETag`/`If-Match` |
+
+Les ADR 010 à 012 restent à rédiger avec leurs epics (E14/E15) et sont listées comme telles
+dans l'index.
+
 ## Décisions et écarts par rapport au plan
 
 | Sujet | Décision / écart | Raison |
@@ -140,6 +181,9 @@ Première exécution réelle et verte : run `43317081941` (backend, CLI et docke
 | Image Docker | `uv sync --frozen` + utilisateur non privilégié | build reproductible et surface réduite (F-08/F-04 de l'audit) |
 | Frontend | seulement `README.md` + `src/.gitkeep` | squelette applicatif prévu en E0-11 |
 | Tests | un seul test à ce stade (santé) | pas encore de logique métier ; la couverture montera avec E1+ |
+| Statuts SQL | `text` + `CHECK` plutôt qu'`ENUM` | états encore provisoires, migrations plus simples |
+| Table utilisateur | `app_user` | `user` est un mot réservé PostgreSQL |
+| `skill.tags` | ajouté au schéma v0 | requis par la recherche E2-13 |
 
 ## Vérifications
 
@@ -183,6 +227,26 @@ workhub.shared is not allowed to import workhub.skills
 workhub_cli is not allowed to import workhub
 ```
 
+Modèle de données (critère E0-06) :
+
+```bash
+docker exec -i workhub-db-1 psql -U workhub -d workhub_schema_test -v ON_ERROR_STOP=1 \
+  < docs/specs/schema-v0.sql
+docker exec -i workhub-db-1 psql -U workhub -d workhub_schema_test -v ON_ERROR_STOP=1 \
+  < docs/specs/schema-v0.verify.sql
+# Vérifications du schéma v0 : OK  (29 tables, 12 scénarios d'invariants)
+```
+
+ADR (critère E0-07) :
+
+```text
+docs/adr/001-monolithe-modulaire.md      docs/adr/006-brouillons-versions.md
+docs/adr/002-blobs-postgres.md           docs/adr/007-plans-template-instance.md
+docs/adr/003-manifeste-empreinte.md      docs/adr/008-suppression-archivage.md
+docs/adr/004-identite-principal.md       docs/adr/009-concurrence-etag.md
+docs/adr/005-mcp-adaptateur.md           index à jour (9 acceptées, 3 à venir)
+```
+
 Stack Docker (critère E0-04) :
 
 ```text
@@ -202,17 +266,13 @@ GET http://localhost:8000/api/v1/health
 - **Docker Desktop requis** : `docker compose up` suppose le démon actif. La validation a été
   faite avec Docker 29.9.2 (Docker Desktop 4.86.0).
 - **API sans base** : Postgres tourne mais l'API ne s'y connecte pas encore (pas de SQLAlchemy
-  ni d'Alembic) ; c'est l'objet de E0-06/E0-09.
+  ni d'Alembic) ; c'est l'objet de E0-09.
+- **DDL non encore migré** : `schema-v0.sql` est la référence ; Alembic l'intégrera en E0-09.
 - **Pas de squelette frontend** (E0-11) : seule une page statique placeholder est servie.
-- **Pas encore d'ADR** : les 12 décisions structurantes sont listées dans
-  [`docs/adr/README.md`](../adr/README.md) mais restent à rédiger (E0-07).
 
 ## Suites
 
-1. **E0-06** — modèle de données v0 (diagramme + DDL des tables MVP).
-2. **E0-07** — ADR 001 → 009 (au minimum 002, 003 et 006 en priorité, cf. plan §13-3).
-3. **E0-08** — noyau `shared` (`Principal`, erreurs, horloge, ids, pagination).
-4. **E0-09** — Alembic + testcontainers pour les tests d'intégration Postgres.
-5. **E0-10** — logging structuré + `request_id` + middleware d'erreurs.
-6. **E0-11** — squelette frontend (Vite/React/TS strict) appelant `/api/v1/health`.
-7. Créer le dépôt distant pour activer réellement la CI.
+1. **E0-08** — noyau `shared` (`Principal`, erreurs, horloge, ids, pagination).
+2. **E0-09** — Alembic + testcontainers pour les tests d'intégration Postgres.
+3. **E0-10** — logging structuré + `request_id` + middleware d'erreurs.
+4. **E0-11** — squelette frontend (Vite/React/TS strict) appelant `/api/v1/health`.

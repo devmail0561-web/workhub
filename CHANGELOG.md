@@ -26,9 +26,16 @@ développement : la version `0.1.0` correspond à l'amorçage, sans release publ
   healthchecks, `backend/Dockerfile`, `deploy/.env.example`, page web placeholder.
 - **Intégration continue (E0-05)** : workflow GitHub Actions avec jobs `backend` (ruff, pyright,
   import-linter, pytest + service Postgres, pip-audit), `cli` et `docker`.
+- **ADR 001 → 009 (E0-07)** : monolithe modulaire, blobs SHA-256, manifeste/empreinte,
+  identité et scopes, MCP adaptateur, brouillons/versions, plans, archivage et concurrence
+  optimiste ; index dans [`docs/adr/`](docs/adr/README.md).
+- **Modèle de données v0 (E0-06)** : [spécification](docs/specs/schema-v0.md) et DDL
+  exécutable (29 tables, 16 triggers) couvrant identité, Skills, plans, audit, outils et
+  propositions ; scripts de vérification des invariants.
 - **Documentation (E0)** : `docs/README.md`, `docs/installation.md`, `docs/developpement.md`,
-  `docs/architecture.md`, journal `docs/implementation/E0-fondations.md` et modèle
-  `docs/implementation/TEMPLATE.md` ; index des ADR.
+  `docs/architecture.md`, `docs/specs/schema-v0.md`, journal
+  `docs/implementation/E0-fondations.md` et modèle `docs/implementation/TEMPLATE.md` ;
+  ADR 001 → 009.
 - **Audit initial** : rapport [`docs/audits/2026-11-12-audit-initial.md`](docs/audits/2026-11-12-audit-initial.md).
 - **Changelog** : ce fichier.
 
