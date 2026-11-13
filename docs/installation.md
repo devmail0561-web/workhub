@@ -85,6 +85,7 @@ docker compose -f deploy/docker-compose.yml down -v    # supprime aussi les donn
 ```
 
 Les ports sont surchargeables dans `deploy/.env` (`API_PORT`, `WEB_PORT`, `POSTGRES_PORT`).
+Le niveau de log se règle avec `LOG_LEVEL` (`INFO` par défaut).
 
 ## Dépannage
 

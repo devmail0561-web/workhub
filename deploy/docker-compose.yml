@@ -23,6 +23,7 @@ services:
       context: ../backend
     environment:
       WORKHUB_ENV: ${WORKHUB_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-workhub}:${POSTGRES_PASSWORD:?Définir POSTGRES_PASSWORD dans deploy/.env}@db:5432/${POSTGRES_DB:-workhub}
     depends_on:
       db:

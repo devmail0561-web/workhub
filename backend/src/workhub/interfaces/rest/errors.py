@@ -70,12 +70,16 @@ def install_error_handlers(app: FastAPI) -> None:
     """Enregistre les gestionnaires d'erreurs communs sur l'application."""
 
     @app.exception_handler(WorkHubError)
-    async def _handle_workhub_error(_: Request, exc: WorkHubError) -> JSONResponse:
+    async def _handle_workhub_error(request: Request, exc: WorkHubError) -> JSONResponse:
+        request_id = getattr(request.state, "request_id", None)
+        if not isinstance(request_id, str):
+            request_id = None
         body = ApiErrorResponse(
             error=ApiErrorBody(
                 code=exc.code,
                 message=exc.message,
                 details=dict(exc.details),
+                request_id=request_id,
             )
         )
         return _json_response(status_for(exc), body)

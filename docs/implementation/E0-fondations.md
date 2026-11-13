@@ -4,8 +4,8 @@
 |---|---|
 | Epic | `E0` |
 | Jalon | M0 — Fondations |
-| Tâches couvertes | `E0-01` → `E0-09` |
-| Statut | E0-01 → E0-09 terminés ; E0-10 → E0-11 à faire |
+| Tâches couvertes | `E0-01` → `E0-10` |
+| Statut | E0-01 → E0-10 terminés ; E0-11 à faire |
 | Dernière mise à jour | 2026-11-13 |
 | ADR liées | [001 → 009](../adr/README.md) |
 | Commits | `bb7f49b` (documents), `0b82963` (fondations) |
@@ -29,6 +29,7 @@ locale saine, **avant la première ligne de métier**. C'est l'ordre imposé par
 | `E0-07` | ADR 001 → 009 | ✅ | 9 ADR acceptées et indexées dans [docs/adr](../adr/README.md) |
 | `E0-08` | Noyau `shared` : `Principal`, erreurs, horloge, ids, pagination, enveloppe d'erreur API | ✅ | importé par les tests des deux premiers modules, 42 tests, couverture 100 % |
 | `E0-09` | Alembic + base de test testcontainers + fixtures | ✅ | migration `upgrade`/`downgrade` vérifiée, 5 tests d'intégration sur vrai Postgres |
+| `E0-10` | Logging structuré + `request_id` + middleware d'erreurs | ✅ | chaque requête produit une ligne JSON avec `request_id`, en-tête `X-Request-ID` |
 
 ## Ce qui a été implémenté
 
@@ -237,6 +238,29 @@ DATABASE_URL=postgresql+psycopg://workhub:change-me@localhost:5432/workhub \
 uv run pytest -m integration
 ```
 
+### E0-10 — Logging JSON, `request_id` et middleware
+
+- **structlog 26** configuré en JSON (`interfaces/rest/logging.py`) : niveau via `LOG_LEVEL`
+  (défaut `INFO`), horodatage UTC, niveau, exception et contextvars fusionnés.
+- **`RequestContextMiddleware`** (`interfaces/rest/middleware.py`) :
+  - reprend `X-Request-ID` s'il respecte `[A-Za-z0-9._-]{1,128}`, sinon génère un UUID v4 ;
+  - expose l'identifiant dans `request.state.request_id`, les contextvars et l'en-tête de
+    réponse `X-Request-ID` ;
+  - journalise une ligne `http.request` avec `method`, `path`, `status_code`, `duration_ms`,
+    `request_id` (sans en-tête ni corps sensible) ;
+  - journalise les exceptions non gérées en niveau `error` avec la trace, puis les propage.
+- **Enveloppe d'erreur** : `request_id` renseigné dans toutes les réponses d'erreur (métier et
+  validation FastAPI), y compris `422`.
+- `LOG_LEVEL` est transmis au conteneur API par Compose (`deploy/.env`).
+- L'access log Uvicorn est désactivé (`--no-access-log`) pour éviter une ligne non JSON en
+  doublon ; le middleware production la ligne `http.request`.
+
+Exemple de ligne (une par requête) :
+
+```json
+{"event":"http.request","request_id":"req-42","method":"GET","path":"/api/v1/health","status_code":200,"duration_ms":1.23,"level":"info","timestamp":"2026-11-13T16:00:00.000000Z"}
+```
+
 ## Décisions et écarts par rapport au plan
 
 | Sujet | Décision / écart | Raison |
@@ -341,6 +365,14 @@ DATABASE_URL=postgresql+psycopg://workhub:change-me@localhost:5432/workhub_alemb
 Après `upgrade` : 30 tables (`29` métier + `alembic_version`) et 16 triggers ; après
 `downgrade base` : uniquement `alembic_version`.
 
+Logs et `request_id` (critère E0-10) :
+
+```bash
+cd backend
+uv run pytest -q             # 65 passed, couverture 100 %
+docker logs workhub-api-1    # une ligne JSON par requête, avec request_id
+```
+
 Stack Docker (critère E0-04) :
 
 ```text
@@ -363,11 +395,12 @@ GET http://localhost:8000/api/v1/health
   d'usage ne lit/écrit encore en base ; c'est l'objet de E1/E2.
 - **Contrat 7 et infrastructure** : `shared/infrastructure` n'est pas encore importé par des
   modèles métier ; l'exception ciblée du contrat sera ajoutée au premier modèle (E1).
+- **Pas d'OpenTelemetry** : traces et métriques restent optionnelles (plan §2.1) ; seuls les
+  logs JSON et le `request_id` sont en place.
 - **Pas de squelette frontend** (E0-11) : seule une page statique placeholder est servie.
 - **Noyau sans persistance** : `shared` fournit les primitives ; la résolution réelle du
   `Principal` et le chargement des scopes arrivent en E1-05.
 
 ## Suites
 
-1. **E0-10** — logging structuré + `request_id` + middleware d'erreurs.
-2. **E0-11** — squelette frontend (Vite/React/TS strict) appelant `/api/v1/health`.
+1. **E0-11** — squelette frontend (Vite/React/TS strict) appelant `/api/v1/health`.

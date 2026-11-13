@@ -26,6 +26,9 @@ développement : la version `0.1.0` correspond à l'amorçage, sans release publ
   healthchecks, `backend/Dockerfile`, `deploy/.env.example`, page web placeholder.
 - **Intégration continue (E0-05)** : workflow GitHub Actions avec jobs `backend` (ruff, pyright,
   import-linter, pytest + service Postgres, pip-audit), `cli` et `docker`.
+- **Observabilité (E0-10)** : logs JSON structlog, `request_id` repris/généré et exposé en
+  `X-Request-ID`, middleware de contexte, `request_id` dans l'enveloppe d'erreur, `LOG_LEVEL`
+  configurable (65 tests, couverture 100 %).
 - **Persistance (E0-09)** : SQLAlchemy 2 async + psycopg 3, Alembic et migration initiale
   `0001_schema_v0` (29 tables, 16 triggers), fixtures `testcontainers` et tests d'intégration
   sur PostgreSQL réel (55 tests, couverture 100 %).

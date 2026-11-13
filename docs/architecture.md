@@ -103,6 +103,15 @@ Précisions d'implémentation :
 - Les migrations sont **synchrones** (déploiement) ; l'application utilise un moteur
   asynchrone.
 
+## Observabilité
+
+- Logs **JSON** via structlog (une ligne par requête) : `event`, `request_id`, `method`, `path`,
+  `status_code`, `duration_ms`, niveau et horodatage UTC.
+- `RequestContextMiddleware` reprend ou génère `X-Request-ID`, l'expose dans la réponse et dans
+  l'enveloppe d'erreur ; aucune donnée sensible (en-têtes, corps) n'est journalisée.
+- Niveau réglable par `LOG_LEVEL` (défaut `INFO`), y compris dans Compose.
+- OpenTelemetry reste une option non activée.
+
 ## Frontières et dépendances externes
 
 - **Pas de LLM embarqué** dans l'application (décision D8 du plan) : les suggestions passent
