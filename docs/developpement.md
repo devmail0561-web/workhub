@@ -85,4 +85,4 @@ hébergés GitHub étant indisponibles sur le compte (blocage de facturation). L
 PostgreSQL du job backend publie le port `55432` pour ne pas entrer en conflit avec la stack
 locale (`5432`).
 
-Dernière exécution vérifiée : run `43317081941`, trois jobs verts (backend, CLI, docker).
+Dernière exécution vérifiée : run `43463518965`, trois jobs verts (backend, CLI, docker).
