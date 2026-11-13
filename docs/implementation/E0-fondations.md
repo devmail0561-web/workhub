@@ -4,8 +4,8 @@
 |---|---|
 | Epic | `E0` |
 | Jalon | M0 — Fondations |
-| Tâches couvertes | `E0-01` → `E0-08` |
-| Statut | E0-01 → E0-08 terminés ; E0-09 → E0-11 à faire |
+| Tâches couvertes | `E0-01` → `E0-09` |
+| Statut | E0-01 → E0-09 terminés ; E0-10 → E0-11 à faire |
 | Dernière mise à jour | 2026-11-13 |
 | ADR liées | [001 → 009](../adr/README.md) |
 | Commits | `bb7f49b` (documents), `0b82963` (fondations) |
@@ -28,6 +28,7 @@ locale saine, **avant la première ligne de métier**. C'est l'ordre imposé par
 | `E0-06` | Modèle de données v0 : diagramme + DDL des tables MVP | ✅ | DDL appliqué sur Postgres 16, 12 scénarios d'invariants validés ([schéma](../specs/schema-v0.md)) |
 | `E0-07` | ADR 001 → 009 | ✅ | 9 ADR acceptées et indexées dans [docs/adr](../adr/README.md) |
 | `E0-08` | Noyau `shared` : `Principal`, erreurs, horloge, ids, pagination, enveloppe d'erreur API | ✅ | importé par les tests des deux premiers modules, 42 tests, couverture 100 % |
+| `E0-09` | Alembic + base de test testcontainers + fixtures | ✅ | migration `upgrade`/`downgrade` vérifiée, 5 tests d'intégration sur vrai Postgres |
 
 ## Ce qui a été implémenté
 
@@ -207,6 +208,35 @@ de E0-10.
 Le contrat 4 autorise explicitement le noyau via `ignore_imports` (`shared.api` réexporte des
 types de `shared.domain`) tout en continuant d'interdire tout accès direct aux internals.
 
+### E0-09 — Alembic, PostgreSQL réel et fixtures
+
+- **SQLAlchemy 2 async** (`postgresql+psycopg`, psycopg 3) et **Alembic** ajoutés aux
+  dépendances ; `backend/alembic.ini` et `backend/migrations/` créés.
+- **Migration initiale `0001_schema_v0`** : reprend le DDL v0 (copie vendue dans
+  `migrations/sql/`) et l'exécute instruction par instruction ; un test garantit que la copie
+  reste identique à [`docs/specs/schema-v0.sql`](../specs/schema-v0.sql).
+- **`migrations/sql_split.py`** : découpage SQL conscient des chaînes, commentaires et blocs
+  `$$`, car `psycopg` n'accepte pas plusieurs instructions par `execute`.
+- **Downgrade** : supprime les 29 tables puis les fonctions, en laissant `alembic_version`
+  cohérent (`base`).
+- **Infrastructure partagée** : `shared/infrastructure/database.py` expose une `Base`
+  déclarative, `create_engine()` et `create_session_factory()` (moteur asynchrone).
+- **Tests d'intégration** : fixture `testcontainers` (`postgres:16-alpine`), migration appliquée
+  via Alembic, session async. Surcharge possible par `WORKHUB_TEST_DATABASE_URL`. Les tests
+  vérifient la version de migration, l'existence des tables, les 16 triggers, le `CHECK` de
+  hash des blobs et l'append-only de `audit_log`.
+
+Commandes :
+
+```bash
+# appliquer les migrations (DATABASE_URL prioritaire sur alembic.ini)
+DATABASE_URL=postgresql+psycopg://workhub:change-me@localhost:5432/workhub \
+  uv run alembic upgrade head
+
+# tests d'intégration (Docker requis pour testcontainers)
+uv run pytest -m integration
+```
+
 ## Décisions et écarts par rapport au plan
 
 | Sujet | Décision / écart | Raison |
@@ -297,6 +327,20 @@ uv run lint-imports          # Contracts: 6 kept, 0 broken.
 uv run pytest -q             # 42 passed, couverture 100 %
 ```
 
+Migrations et tests d'intégration (critère E0-09) :
+
+```bash
+cd backend
+uv run pytest -q                    # 55 passed, couverture 100 %
+DATABASE_URL=postgresql+psycopg://workhub:change-me@localhost:5432/workhub_alembic_test \
+  uv run alembic upgrade head       # 0001_schema_v0 (head)
+DATABASE_URL=postgresql+psycopg://workhub:change-me@localhost:5432/workhub_alembic_test \
+  uv run alembic downgrade base     # retour à l'état vide
+```
+
+Après `upgrade` : 30 tables (`29` métier + `alembic_version`) et 16 triggers ; après
+`downgrade base` : uniquement `alembic_version`.
+
 Stack Docker (critère E0-04) :
 
 ```text
@@ -315,15 +359,15 @@ GET http://localhost:8000/api/v1/health
   rester en ligne pour que les workflows démarrent.
 - **Docker Desktop requis** : `docker compose up` suppose le démon actif. La validation a été
   faite avec Docker 29.9.2 (Docker Desktop 4.86.0).
-- **API sans base** : Postgres tourne mais l'API ne s'y connecte pas encore (pas de SQLAlchemy
-  ni d'Alembic) ; c'est l'objet de E0-09.
-- **DDL non encore migré** : `schema-v0.sql` est la référence ; Alembic l'intégrera en E0-09.
+- **API sans persistance au runtime** : le moteur et les migrations existent, mais aucun cas
+  d'usage ne lit/écrit encore en base ; c'est l'objet de E1/E2.
+- **Contrat 7 et infrastructure** : `shared/infrastructure` n'est pas encore importé par des
+  modèles métier ; l'exception ciblée du contrat sera ajoutée au premier modèle (E1).
 - **Pas de squelette frontend** (E0-11) : seule une page statique placeholder est servie.
 - **Noyau sans persistance** : `shared` fournit les primitives ; la résolution réelle du
   `Principal` et le chargement des scopes arrivent en E1-05.
 
 ## Suites
 
-1. **E0-09** — Alembic + testcontainers pour les tests d'intégration Postgres.
-2. **E0-10** — logging structuré + `request_id` + middleware d'erreurs.
-3. **E0-11** — squelette frontend (Vite/React/TS strict) appelant `/api/v1/health`.
+1. **E0-10** — logging structuré + `request_id` + middleware d'erreurs.
+2. **E0-11** — squelette frontend (Vite/React/TS strict) appelant `/api/v1/health`.

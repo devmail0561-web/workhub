@@ -26,6 +26,9 @@ développement : la version `0.1.0` correspond à l'amorçage, sans release publ
   healthchecks, `backend/Dockerfile`, `deploy/.env.example`, page web placeholder.
 - **Intégration continue (E0-05)** : workflow GitHub Actions avec jobs `backend` (ruff, pyright,
   import-linter, pytest + service Postgres, pip-audit), `cli` et `docker`.
+- **Persistance (E0-09)** : SQLAlchemy 2 async + psycopg 3, Alembic et migration initiale
+  `0001_schema_v0` (29 tables, 16 triggers), fixtures `testcontainers` et tests d'intégration
+  sur PostgreSQL réel (55 tests, couverture 100 %).
 - **Noyau partagé (E0-08)** : `Principal` et scopes, hiérarchie d'erreurs métier, horloge
   injectable UTC, génération d'UUID, pagination bornée et enveloppe d'erreur REST unique ;
   42 tests, couverture 100 %.
@@ -70,6 +73,7 @@ développement : la version `0.1.0` correspond à l'amorçage, sans release publ
 ### Notes
 
 - Première CI verte sur GitHub : run `43317081941` (backend, CLI, docker).
-- API non connectée à PostgreSQL à ce stade (prévu en E0-06/E0-09).
-- Risques ouverts de l'audit (contrat d'indépendance vs noyau `shared`, couverture de tests,
-  reproductibilité de l'image Docker, surface réseau de dev) : voir le rapport d'audit.
+- Le moteur et les migrations existent, mais l'API n'utilise pas encore la base au runtime
+  (premiers cas d'usage en E1/E2).
+- Constats F-07 à F-10 de l'audit corrigés ; reste F-12 (image de base non épinglée/scannée) :
+  voir le rapport d'audit.

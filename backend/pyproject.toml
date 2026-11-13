@@ -6,9 +6,12 @@ readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.12"
 dependencies = [
+    "alembic>=1.14",
     "fastapi>=0.115",
+    "psycopg[binary]>=3.2",
     "pydantic>=2.9",
     "pydantic-settings>=2.5",
+    "sqlalchemy[asyncio]>=2.0",
     "uvicorn[standard]>=0.32",
 ]
 
@@ -23,6 +26,7 @@ dev = [
     "pytest-asyncio>=0.24",
     "pytest-cov>=6.0",
     "ruff>=0.8",
+    "testcontainers[postgres]>=4.9",
 ]
 
 [build-system]
@@ -54,7 +58,7 @@ ignore = []
 known-first-party = ["workhub"]
 
 [tool.pyright]
-include = ["src", "tests"]
+include = ["src", "tests", "migrations"]
 exclude = [".venv", "**/__pycache__"]
 typeCheckingMode = "strict"
 pythonVersion = "3.12"
@@ -65,8 +69,11 @@ venv = ".venv"
 testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 addopts = "-ra --cov=workhub --cov-report=term-missing"
+markers = [
+    "integration: test nécessitant un vrai PostgreSQL (testcontainers)",
+]
 
 [tool.coverage.run]
 source = ["workhub"]

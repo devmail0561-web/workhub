@@ -24,7 +24,8 @@ Toutes les commandes backend s'exécutent depuis `backend/` :
 
 | Commande | Rôle |
 |---|---|
-| `uv run pytest` | Tests |
+| `uv run pytest` | Tests + couverture (testcontainers : Docker requis) |
+| `uv run alembic upgrade head` | Migrations de base |
 | `uv run ruff check .` | Lint |
 | `uv run ruff format --check .` | Format |
 | `uv run pyright` | Typage strict |

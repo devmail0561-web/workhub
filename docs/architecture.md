@@ -91,6 +91,18 @@ Précisions d'implémentation :
 | `Page`, `PageRequest`, `paginate` | pagination bornée et navigation |
 | `install_error_handlers` (interface REST) | enveloppe JSON unique `{"error": {...}}` |
 
+## Persistance
+
+- **SQLAlchemy 2** en mode asynchrone, pilote **psycopg 3** (`postgresql+psycopg`).
+- **Alembic** dans `backend/migrations/` ; migration initiale `0001_schema_v0` issue du
+  [schéma v0](specs/schema-v0.md). Le DDL de référence reste documenté, une copie vendue est
+  utilisée par la migration et un test empêche la dérive.
+- `shared/infrastructure/database.py` fournit `Base`, `create_engine()` et
+  `create_session_factory()`. Les tests d'intégration démarrent un PostgreSQL jetable via
+  **testcontainers** et appliquent les migrations.
+- Les migrations sont **synchrones** (déploiement) ; l'application utilise un moteur
+  asynchrone.
+
 ## Frontières et dépendances externes
 
 - **Pas de LLM embarqué** dans l'application (décision D8 du plan) : les suggestions passent

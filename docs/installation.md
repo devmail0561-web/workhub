@@ -66,6 +66,17 @@ curl -fsS http://localhost:8000/api/v1/health
 # {"status":"ok","version":"0.1.0"}
 ```
 
+Appliquer les migrations de base :
+
+```bash
+cd backend
+export DATABASE_URL="postgresql+psycopg://workhub:<mot-de-passe>@localhost:5432/workhub"
+uv run alembic upgrade head
+```
+
+Compose ne lance pas encore les migrations automatiquement ; cette étape est requise avant
+d'utiliser la base (E0-09).
+
 Arrêt :
 
 ```bash
