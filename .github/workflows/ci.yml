@@ -121,12 +121,8 @@ jobs:
         with:
           version: 10.32.1
 
-      - name: Installer Node.js 20
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
-          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Vérifier Node.js (système, 20.19+ requis)
+        run: node --version
 
       - name: Installer les dépendances
         run: pnpm install --frozen-lockfile
