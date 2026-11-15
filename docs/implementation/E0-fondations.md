@@ -43,7 +43,7 @@ workhub-plan/
 ├── CONTRIBUTING.md         # prérequis, commandes, règles, DoD, commits
 ├── LICENSE                 # MIT
 ├── backend/
-│   ├── src/workhub/        # 12 modules métier + interfaces/{rest,mcp}
+│   ├── src/workhub/        # 11 modules métier + shared + interfaces/{rest,mcp}
 │   └── tests/{unit,integration,contract,security}
 ├── cli/
 ├── frontend/
@@ -109,10 +109,11 @@ externes (`fastapi`, `sqlalchemy`, `workhub`).
   respecté), exécution sous l'utilisateur non privilégié `appuser` (uid 10001), `uvicorn` sur
   le port 8000.
 - `backend/.dockerignore` : exclut `.venv`, caches et tests.
-- `deploy/docker-compose.yml` : `db` (Postgres 16-alpine), `api` (build backend), `web`
-  (build multi-étapes `frontend/Dockerfile` : Node/pnpm puis Nginx, proxy `/api`), tous avec
-  healthchecks et `depends_on` sur l'état sain ; volume nommé `pgdata`.
-  `POSTGRES_PASSWORD` est **obligatoire** et les ports sont publiés sur `127.0.0.1` uniquement.
+- `deploy/docker-compose.yml` : `db` (Postgres 16-alpine), `migrate` (one-shot
+  `alembic upgrade head`), `api` (build backend), `web` (build multi-étapes
+  `frontend/Dockerfile` : Node/pnpm puis Nginx, proxy `/api`), avec healthchecks et
+  `depends_on` sur l'état sain ; volume nommé `pgdata`. `POSTGRES_PASSWORD` est
+  **obligatoire** et les ports sont publiés sur `127.0.0.1` uniquement.
 - `deploy/.env.example` : identifiants Postgres, ports, `LOG_LEVEL` surchargeables.
 
 ### E0-05 — Intégration continue
@@ -120,16 +121,19 @@ externes (`fastapi`, `sqlalchemy`, `workhub`).
 `.github/workflows/ci.yml` comporte quatre jobs :
 
 - `backend` : uv + Python 3.12, `sync --frozen`, ruff lint/format, pyright, import-linter,
-  pytest avec service PostgreSQL 16, `pip-audit` ;
-- `cli` : ruff, pyright, import-linter, pytest ;
-- `frontend` : pnpm + Node 20, `install --frozen-lockfile`, `tsc`, Vitest, build Vite ;
+  vérification du snapshot OpenAPI, pytest avec service PostgreSQL 16, `pip-audit` ;
+- `cli` : ruff, pyright, import-linter, pytest, `pip-audit` ;
+- `frontend` : pnpm + Node 20, `install --frozen-lockfile`, `pnpm audit`, `tsc`, vérification
+  de dérive des types OpenAPI, Vitest, build Vite ;
 - `docker` : `docker compose config` et `docker build` des images API et web.
 
-Déclencheurs : `push` sur `main` et toute `pull_request`, avec annulation des exécutions
+Déclencheurs : `push` sur `main` et `pull_request` du dépôt, avec annulation des exécutions
 obsolètes (`concurrency`). Les jobs tournent sur le **runner self-hosted** du dépôt
 (`runs-on: [self-hosted, linux, x64]`) car les runners hébergés GitHub sont bloqués par un
-problème de facturation du compte. Le service PostgreSQL de la CI publie `55432` pour éviter
-tout conflit avec la stack locale (`5432`).
+problème de facturation du compte. Les PR issues de forks sont ignorées pour ne pas exécuter
+de code externe sur l'hôte ; `permissions: contents: read`, `persist-credentials: false` et
+les actions épinglées par SHA limitent la surface. Le service PostgreSQL de la CI publie
+`55432` pour éviter tout conflit avec la stack locale (`5432`).
 
 Première exécution réelle et verte : run `43317081941` (backend, CLI et docker).
 
@@ -250,8 +254,9 @@ uv run pytest -m integration
   - journalise une ligne `http.request` avec `method`, `path`, `status_code`, `duration_ms`,
     `request_id` (sans en-tête ni corps sensible) ;
   - journalise les exceptions non gérées en niveau `error` avec la trace, puis les propage.
-- **Enveloppe d'erreur** : `request_id` renseigné dans toutes les réponses d'erreur (métier et
-  validation FastAPI), y compris `422`.
+- **Enveloppe d'erreur** : `request_id` renseigné dans toutes les réponses d'erreur (métier,
+  validation FastAPI, erreurs HTTP 404/405 et exception inattendue), y compris `422` ; les
+  valeurs d'entrée ne sont pas renvoyées dans les détails de validation.
 - `LOG_LEVEL` est transmis au conteneur API par Compose (`deploy/.env`).
 - L'access log Uvicorn est désactivé (`--no-access-log`) pour éviter une ligne non JSON en
   doublon ; le middleware production la ligne `http.request`.
@@ -296,7 +301,7 @@ Exemple de ligne (une par requête) :
 | Frontend | Vite 8 + React 19 + TypeScript strict, Tailwind 4, shadcn/ui, TanStack Router/Query, client OpenAPI généré | squelette E0-11 ; Playwright/Monaco avec les écrans métier |
 | Gestionnaire frontend | **pnpm 10** (lockfile versionné) | `npm install` échouait sur cet ensemble de dépendances |
 | Origine API | proxy Vite/Nginx, pas de CORS | même origine en dev et en production |
-| Tests | un seul test à ce stade (santé) | pas encore de logique métier ; la couverture montera avec E1+ |
+| Tests | 70 tests, couverture 100 % | noyau, schéma, erreurs et frontend couverts ; les scénarios métier arrivent en E1+ |
 | Statuts SQL | `text` + `CHECK` plutôt qu'`ENUM` | états encore provisoires, migrations plus simples |
 | Table utilisateur | `app_user` | `user` est un mot réservé PostgreSQL |
 | `skill.tags` | ajouté au schéma v0 | requis par la recherche E2-13 |
@@ -392,7 +397,7 @@ Logs et `request_id` (critère E0-10) :
 
 ```bash
 cd backend
-uv run pytest -q             # 65 passed, couverture 100 %
+uv run pytest -q             # 70 passed, couverture 100 % (correctifs post-audit inclus)
 docker logs workhub-api-1    # une ligne JSON par requête, avec request_id
 ```
 
@@ -420,6 +425,63 @@ GET http://localhost:8000/api/v1/health
 GET http://localhost:8080/api/v1/health   (via Nginx)
 {"status":"ok","version":"0.1.0"}
 ```
+
+## Correctifs post-audit (2026-11-15)
+
+Après l'audit complet du 2026-11-13, les correctifs suivants ont été appliqués sans changer le
+périmètre fonctionnel de E0 :
+
+- **Erreurs HTTP** : handlers pour `StarletteHTTPException` et `Exception` ; 404, 405, 422 et
+  500 utilisent désormais l'enveloppe `{"error": ...}`, avec `X-Request-ID` et `request_id`.
+  Les détails de validation n'exposent plus `input`.
+- **Santé** : `HealthResponse` typé (`status: Literal["ok"]`, `version`), `response_model`
+  FastAPI et régénération de `frontend/openapi.json` / `src/api/schema.d.ts`.
+- **Logging** : `LOG_LEVEL` inconnu retombe sur `INFO` avec un avertissement au lieu de faire
+  échouer l'import.
+- **Pagination** : `paginate()` documente et teste une séquence complète ; l'offset n'est
+  appliqué qu'une fois, même avec `total`.
+- **Migrations** : `alembic.ini` et `migrations/` sont inclus dans l'image API ; Compose
+  exécute le service one-shot `migrate` avant l'API.
+- **Healthchecks** : API et web utilisent `127.0.0.1` (le `localhost` IPv6 de BusyBox causait
+  un faux `unhealthy` du conteneur web).
+- **CI** : `permissions: contents: read`, `persist-credentials: false`, actions épinglées par
+  SHA, PR de forks ignorées sur le runner self-hosted, contrôle du snapshot OpenAPI, dérive
+  des types TypeScript et `pnpm audit`.
+
+Commandes exécutées le 2026-11-15 :
+
+```bash
+cd backend
+uv run ruff format .          # 1 fichier reformatté
+uv run ruff check .           # All checks passed!
+uv run pyright                # 0 errors, 0 warnings
+uv run lint-imports           # Contracts: 6 kept, 0 broken.
+uv run pytest -q              # 70 passed, couverture 100 %
+
+cd ../frontend
+pnpm run typecheck            # aucune erreur
+pnpm run test                 # 3 tests Vitest
+pnpm run build                # build Vite réussi
+pnpm audit --prod             # No known vulnerabilities found
+```
+
+Stack Compose vérifiée après reconstruction :
+
+```text
+workhub-api-1      Up (healthy)
+workhub-db-1       Up (healthy)
+workhub-migrate-1  Exited (0)
+workhub-web-1      Up (healthy)
+
+GET /api/v1/health         -> 200 {"status":"ok","version":"0.1.0"}
+GET /unknown               -> 404 enveloppe JSON + X-Request-ID
+POST /api/v1/health        -> 405 enveloppe JSON + Allow: GET
+tables PostgreSQL          -> 30 (29 métier + alembic_version)
+```
+
+Restent ouverts, hors de ce lot : index des FK, triggers `TRUNCATE`/séparation des rôles DB,
+tests CI du script `schema-v0.verify.sql` et du downgrade, scan d'images et durcissement
+Nginx/frontend (voir le rapport d'audit).
 
 ## Limites connues
 

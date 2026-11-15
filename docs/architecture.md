@@ -97,6 +97,8 @@ Précisions d'implémentation :
 - **Alembic** dans `backend/migrations/` ; migration initiale `0001_schema_v0` issue du
   [schéma v0](specs/schema-v0.md). Le DDL de référence reste documenté, une copie vendue est
   utilisée par la migration et un test empêche la dérive.
+- L'image API contient `alembic.ini` et `migrations/`. Compose exécute le service one-shot
+  `migrate` (`alembic upgrade head`) avant de démarrer l'API.
 - `shared/infrastructure/database.py` fournit `Base`, `create_engine()` et
   `create_session_factory()`. Les tests d'intégration démarrent un PostgreSQL jetable via
   **testcontainers** et appliquent les migrations.
@@ -123,7 +125,12 @@ Précisions d'implémentation :
   `status_code`, `duration_ms`, niveau et horodatage UTC.
 - `RequestContextMiddleware` reprend ou génère `X-Request-ID`, l'expose dans la réponse et dans
   l'enveloppe d'erreur ; aucune donnée sensible (en-têtes, corps) n'est journalisée.
-- Niveau réglable par `LOG_LEVEL` (défaut `INFO`), y compris dans Compose.
+- Toutes les erreurs HTTP (404/405, validation, erreur métier, exception inattendue) utilisent
+  la même enveloppe JSON et exposent `request_id` ; les entrées de validation sont filtrées.
+- `GET /api/v1/health` est typé par `HealthResponse` (`status: "ok"`, `version`), donc présent
+  dans les composants OpenAPI et dans le client TypeScript.
+- Niveau réglable par `LOG_LEVEL` (défaut `INFO`), y compris dans Compose ; une valeur inconnue
+  retombe sur `INFO` avec un avertissement.
 - OpenTelemetry reste une option non activée.
 
 ## Frontières et dépendances externes

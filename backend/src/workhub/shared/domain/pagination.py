@@ -76,8 +76,9 @@ class Page[T]:
 def paginate[T](items: Sequence[T], request: PageRequest, *, total: int | None = None) -> Page[T]:
     """Découpe `items` selon `request`.
 
-    `total` permet de fournir le total réel lorsque `items` est déjà une fenêtre issue du
-    stockage ; par défaut, il vaut la taille de `items`.
+    `items` doit être la séquence complète, jamais une fenêtre déjà limitée. `total` permet de
+    fournir un total différent de `len(items)` (par exemple un comptage séparé) ; la fenêtre est
+    toujours calculée à partir de `request.offset` et `request.limit`.
     """
     resolved_total = len(items) if total is None else total
     window = tuple(items[request.offset : request.offset + request.limit])

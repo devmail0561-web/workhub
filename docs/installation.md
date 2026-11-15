@@ -59,6 +59,9 @@ Services démarrés :
 | Web | http://localhost:8080 | SPA React servie par Nginx, proxy `/api` |
 | PostgreSQL | `localhost:5432` | base de données |
 
+Le service `migrate` n'est pas un serveur : il se termine normalement (`Exited (0)`) après avoir
+appliqué le schéma.
+
 Vérification :
 
 ```bash
@@ -78,16 +81,15 @@ pnpm install --frozen-lockfile
 pnpm run dev          # http://localhost:5173, proxy /api vers :8000
 ```
 
-Appliquer les migrations de base :
+Compose applique les migrations automatiquement : le service one-shot `migrate` exécute
+`alembic upgrade head` après le healthcheck de PostgreSQL, puis l'API démarre lorsque la
+migration a réussi. Pour un backend lancé hors Compose :
 
 ```bash
 cd backend
 export DATABASE_URL="postgresql+psycopg://workhub:<mot-de-passe>@localhost:5432/workhub"
 uv run alembic upgrade head
 ```
-
-Compose ne lance pas encore les migrations automatiquement ; cette étape est requise avant
-d'utiliser la base (E0-09).
 
 Arrêt :
 

@@ -6,6 +6,7 @@ réponse JSON stable : `{"error": {"code", "message", "details", "request_id"}}`
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from fastapi import FastAPI, Request
@@ -13,7 +14,9 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from workhub.interfaces.rest.middleware import REQUEST_ID_HEADER, get_request_id
 from workhub.shared.api import (
     AuthenticationError,
     ConflictError,
@@ -53,6 +56,30 @@ _STATUS_BY_ERROR: tuple[tuple[type[WorkHubError], int], ...] = (
 
 _DEFAULT_STATUS = 500
 
+_HTTP_ERROR_CODES = {
+    400: "validation_error",
+    401: "authentication_required",
+    403: "permission_denied",
+    404: "not_found",
+    405: "method_not_allowed",
+    409: "conflict",
+    412: "precondition_failed",
+    422: "validation_error",
+    429: "rate_limited",
+}
+
+_HTTP_ERROR_MESSAGES = {
+    400: "Requête invalide",
+    401: "Authentification requise",
+    403: "Accès refusé",
+    404: "Ressource introuvable",
+    405: "Méthode non autorisée",
+    409: "Conflit",
+    412: "Précondition invalide",
+    422: "Requête invalide",
+    429: "Trop de requêtes",
+}
+
 
 def status_for(error: WorkHubError) -> int:
     """Traduit une erreur métier en statut HTTP."""
@@ -62,8 +89,34 @@ def status_for(error: WorkHubError) -> int:
     return _DEFAULT_STATUS
 
 
-def _json_response(status: int, body: ApiErrorResponse) -> JSONResponse:
-    return JSONResponse(status_code=status, content=body.model_dump())
+def _headers(
+    request_id: str | None,
+    extra: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    headers = dict(extra or {})
+    if request_id is not None:
+        headers[REQUEST_ID_HEADER] = request_id
+    return headers
+
+
+def _json_response(
+    status: int,
+    body: ApiErrorResponse,
+    *,
+    headers: Mapping[str, str] | None = None,
+) -> JSONResponse:
+    return JSONResponse(status_code=status, content=body.model_dump(), headers=headers)
+
+
+def _validation_errors(exc: RequestValidationError) -> list[dict[str, Any]]:
+    return [
+        {
+            "type": error["type"],
+            "loc": jsonable_encoder(error["loc"]),
+            "msg": error["msg"],
+        }
+        for error in exc.errors()
+    ]
 
 
 def install_error_handlers(app: FastAPI) -> None:
@@ -71,9 +124,7 @@ def install_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(WorkHubError)
     async def _handle_workhub_error(request: Request, exc: WorkHubError) -> JSONResponse:
-        request_id = getattr(request.state, "request_id", None)
-        if not isinstance(request_id, str):
-            request_id = None
+        request_id = get_request_id(request)
         body = ApiErrorResponse(
             error=ApiErrorBody(
                 code=exc.code,
@@ -82,15 +133,53 @@ def install_error_handlers(app: FastAPI) -> None:
                 request_id=request_id,
             )
         )
-        return _json_response(status_for(exc), body)
+        return _json_response(status_for(exc), body, headers=_headers(request_id))
+
+    @app.exception_handler(StarletteHTTPException)
+    async def _handle_http_error(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+        status = exc.status_code
+        request_id = get_request_id(request)
+        is_server_error = status >= 500
+        code = "internal_error" if is_server_error else _HTTP_ERROR_CODES.get(status, "http_error")
+        message = (
+            "Erreur interne"
+            if is_server_error
+            else _HTTP_ERROR_MESSAGES.get(status, str(exc.detail))
+        )
+        body = ApiErrorResponse(
+            error=ApiErrorBody(
+                code=code,
+                message=message,
+                details={},
+                request_id=request_id,
+            )
+        )
+        return _json_response(status, body, headers=_headers(request_id, exc.headers))
 
     @app.exception_handler(RequestValidationError)
-    async def _handle_request_validation(_: Request, exc: RequestValidationError) -> JSONResponse:
+    async def _handle_request_validation(
+        request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        request_id = get_request_id(request)
         body = ApiErrorResponse(
             error=ApiErrorBody(
                 code=ValidationError.code,
                 message="Requête invalide",
-                details={"errors": jsonable_encoder(exc.errors())},
+                details={"errors": _validation_errors(exc)},
+                request_id=request_id,
             )
         )
-        return _json_response(422, body)
+        return _json_response(422, body, headers=_headers(request_id))
+
+    @app.exception_handler(Exception)
+    async def _handle_unexpected_error(request: Request, _: Exception) -> JSONResponse:
+        request_id = get_request_id(request)
+        body = ApiErrorResponse(
+            error=ApiErrorBody(
+                code=WorkHubError.code,
+                message="Erreur interne",
+                details={},
+                request_id=request_id,
+            )
+        )
+        return _json_response(500, body, headers=_headers(request_id))

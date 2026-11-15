@@ -24,5 +24,11 @@ def test_configure_logging_defaults_to_info(monkeypatch: pytest.MonkeyPatch) -> 
     assert logging.getLogger().level == logging.INFO
 
 
+def test_configure_logging_invalid_level_falls_back_to_info() -> None:
+    configure_logging("BOGUS")
+    assert logging.getLogger().level == logging.INFO
+    configure_logging("INFO")
+
+
 def test_get_logger_returns_a_logger() -> None:
     assert get_logger("workhub.test") is not None

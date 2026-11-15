@@ -52,6 +52,14 @@ def test_paginate_accepts_explicit_total() -> None:
     assert page.has_next
 
 
+def test_paginate_with_total_applies_offset_once() -> None:
+    page = paginate(list(range(1, 11)), PageRequest(limit=3, offset=3), total=10)
+
+    assert page.items == (4, 5, 6)
+    assert page.has_next
+    assert page.next_offset == 6
+
+
 def test_page_empty() -> None:
     page = Page[int].empty(PageRequest(limit=5, offset=2))
 

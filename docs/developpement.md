@@ -66,7 +66,7 @@ Depuis `cli/` : `uv run pytest`, `uv run ruff check .`, `uv run ruff format --ch
 3. Créer ou mettre à jour la page d'implémentation dans `docs/implementation/`.
 4. Ajouter l'entrée correspondante dans `CHANGELOG.md` (section `Unreleased`).
 5. Si la tâche prend une décision structurante, rédiger l'ADR correspondante.
-6. Vérifier localement les six commandes backend ci-dessus.
+6. Vérifier localement les huit commandes backend ci-dessus.
 7. Commiter (message `type(scope): description`).
 
 ## Définition de « terminé »
@@ -94,17 +94,24 @@ Reprise de la DoD du plan, complétée par l'exigence de documentation :
 
 ## Intégration continue
 
-`.github/workflows/ci.yml` définit trois jobs :
+`.github/workflows/ci.yml` définit quatre jobs :
 
-- **backend** : ruff (lint + format), pyright, import-linter, pytest avec un service
-  PostgreSQL 16, puis `pip-audit`.
-- **cli** : ruff, pyright, import-linter, pytest.
-- **docker** : validation de la configuration Compose et construction de l'image API.
+- **backend** : ruff (lint + format), pyright, import-linter, vérification du snapshot
+  OpenAPI, pytest avec un service PostgreSQL 16, puis `pip-audit`.
+- **cli** : ruff, pyright, import-linter, pytest, `pip-audit`.
+- **frontend** : `pnpm audit`, tsc, vérification de dérive des types OpenAPI, Vitest, build.
+- **docker** : validation de la configuration Compose et construction des images API et web.
 
-La CI se déclenche sur `push` vers `main` et sur toute `pull_request`. Les jobs s'exécutent
-sur le **runner self-hosted** du dépôt (`runs-on: [self-hosted, linux, x64]`), les runners
-hébergés GitHub étant indisponibles sur le compte (blocage de facturation). Le service
+La CI se déclenche sur `push` vers `main` et sur les `pull_request` du dépôt. Les jobs utilisent
+le **runner self-hosted** du dépôt (`runs-on: [self-hosted, linux, x64]`), les runners hébergés
+GitHub étant indisponibles sur le compte (blocage de facturation). Pour ne pas exécuter du code
+de fork non fiable sur cet hôte, les jobs sont ignorés lorsque la PR vient d'un fork. Le service
 PostgreSQL du job backend publie le port `55432` pour ne pas entrer en conflit avec la stack
 locale (`5432`).
 
-Dernière exécution vérifiée : run `43463518965`, trois jobs verts (backend, CLI, docker).
+La CI verrouille `permissions: contents: read`, désactive `persist-credentials` et épingle les
+actions par SHA. Le snapshot `frontend/openapi.json` et les types générés sont contrôlés à
+chaque exécution.
+
+Dernière exécution verte avant ce durcissement : run `43473812449` (backend, CLI, frontend,
+Docker) ; le prochain run validera les nouveaux contrôles.

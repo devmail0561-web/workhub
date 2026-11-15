@@ -54,6 +54,10 @@ développement : la version `0.1.0` correspond à l'amorçage, sans release publ
 
 ### Changed
 
+- **Correctifs post-audit** : `/api/v1/health` est typé (`HealthResponse`) et l'enveloppe
+  d'erreur couvre aussi 404/405/500 ; Compose exécute un service one-shot `migrate` avant
+  l'API ; la CI verrouille les permissions, épingle les actions par SHA et refuse les PR de
+  forks sur le runner self-hosted.
 - La définition de « terminé » exige désormais la mise à jour de la page d'implémentation de
   l'epic concerné (`docs/implementation/`) et une entrée dans ce changelog.
 - La configuration `pre-commit` est déplacée à la racine du dépôt avec un jeu de hooks par
@@ -62,6 +66,18 @@ développement : la version `0.1.0` correspond à l'amorçage, sans release publ
 
 ### Fixed
 
+- **Enveloppe d'erreur** : 404/405 renvoyaient `{"detail": ...}`, 422 avait `request_id: null`
+  et 500 renvoyait `text/plain` sans `X-Request-ID` ; tous les cas utilisent désormais
+  `{"error": ...}` avec l'identifiant, et les entrées de validation ne sont plus exposées.
+- **Healthcheck web** : BusyBox `wget` résolvait `localhost` en `::1` alors que Nginx n'écoute
+  qu'en IPv4 ; le healthcheck utilise `127.0.0.1`, le conteneur redevient `healthy`.
+- **Déploiement des migrations** : l'image API ne contenait pas `alembic.ini`/`migrations/` et
+  Compose laissait la base vide ; les fichiers sont copiés et un service `migrate` précède
+  l'API.
+- **`LOG_LEVEL`** : une valeur inconnue faisait échouer l'import (`KeyError`) ; elle retombe
+  désormais sur `INFO` avec un avertissement.
+- **Pagination** : `paginate()` appliquait l'offset une seconde fois lorsqu'un `total` était
+  fourni ; la sémantique « séquence complète » est documentée et testée.
 - `pre-commit` fonctionne réellement : les hooks ruff, pyright et import-linter s'exécutent dans
   le bon projet et le motif de fichiers couvre bien les sources.
 - 21 fichiers sans newline final.
@@ -84,3 +100,7 @@ développement : la version `0.1.0` correspond à l'amorçage, sans release publ
   (premiers cas d'usage en E1/E2).
 - Constats F-07 à F-10 de l'audit corrigés ; reste F-12 (image de base non épinglée/scannée) :
   voir le rapport d'audit.
+- Le runner self-hosted reste requis ; les PR issues de forks sont désormais ignorées pour ne
+  pas exécuter de code externe sur l'hôte. Une isolation éphémère du runner reste recommandée.
+- Le durcissement CI (Snapshot OpenAPI, `pnpm audit`, actions épinglées) sera validé par le
+  prochain run GitHub.

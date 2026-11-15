@@ -1,6 +1,9 @@
 """Application FastAPI — point d'entrée HTTP."""
 
+from typing import Literal
+
 from fastapi import FastAPI
+from pydantic import BaseModel
 
 from workhub import __version__
 from workhub.interfaces.rest.errors import install_error_handlers
@@ -14,7 +17,14 @@ install_error_handlers(app)
 app.add_middleware(RequestContextMiddleware)
 
 
-@app.get("/api/v1/health")
-async def health() -> dict[str, str]:
+class HealthResponse(BaseModel):
+    """Réponse de la sonde de santé."""
+
+    status: Literal["ok"]
+    version: str
+
+
+@app.get("/api/v1/health", response_model=HealthResponse)
+async def health() -> HealthResponse:
     """Sonde de santé utilisée par Docker et la CI."""
-    return {"status": "ok", "version": __version__}
+    return HealthResponse(status="ok", version=__version__)
