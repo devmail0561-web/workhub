@@ -20,8 +20,8 @@ Depuis `backend/` :
 | Commande | Rôle | Attendu |
 |---|---|---|
 | `uv run pytest` | tests + couverture (seuil 80 % global) | tous verts, seuil atteint |
-| `uv run pytest -m integration` | tests sur PostgreSQL réel (testcontainers) | 5 tests verts, Docker requis |
-| `uv run alembic upgrade head` | applique les migrations (`DATABASE_URL` prioritaire) | `0001_schema_v0 (head)` |
+| `uv run pytest -m integration` | tests sur PostgreSQL réel (testcontainers) | 8 tests verts, Docker requis |
+| `uv run alembic upgrade head` | applique les migrations (`DATABASE_URL` prioritaire) | `0003_fk_indexes (head)` |
 | `uv run ruff check .` | lint | `All checks passed!` |
 | `uv run ruff format --check .` | format | aucun fichier à reformater |
 | `uv run pyright` | typage strict | `0 errors` |
@@ -97,7 +97,8 @@ Reprise de la DoD du plan, complétée par l'exigence de documentation :
 `.github/workflows/ci.yml` définit quatre jobs :
 
 - **backend** : ruff (lint + format), pyright, import-linter, vérification du snapshot
-  OpenAPI, pytest avec un service PostgreSQL 16, puis `pip-audit`.
+  OpenAPI, upgrade/downgrade/upgrade Alembic, pytest avec un service PostgreSQL 16, puis
+  `pip-audit`.
 - **cli** : ruff, pyright, import-linter, pytest, `pip-audit`.
 - **frontend** : `pnpm audit`, tsc, vérification de dérive des types OpenAPI, Vitest, build.
 - **docker** : validation de la configuration Compose et construction des images API et web.
@@ -109,9 +110,11 @@ de fork non fiable sur cet hôte, les jobs sont ignorés lorsque la PR vient d'u
 PostgreSQL du job backend publie le port `55432` pour ne pas entrer en conflit avec la stack
 locale (`5432`).
 
-La CI verrouille `permissions: contents: read`, désactive `persist-credentials` et épingle les
-actions par SHA. Le snapshot `frontend/openapi.json` et les types générés sont contrôlés à
-chaque exécution.
+La CI verrouille `permissions: contents: read`, désactive `persist-credentials`, épingle les
+actions par SHA (`sha_pinning_required` activé côté dépôt) et borne chaque job avec
+`timeout-minutes`. La branche `main` exige les quatre checks CI, interdit force-push et
+suppression. Le snapshot `frontend/openapi.json`, les types générés et la réversibilité des
+migrations sont contrôlés à chaque exécution.
 
 Dernière exécution verte avant ce durcissement : run `43473812449` (backend, CLI, frontend,
 Docker) ; le prochain run validera les nouveaux contrôles.

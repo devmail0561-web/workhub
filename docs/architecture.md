@@ -95,10 +95,15 @@ Précisions d'implémentation :
 
 - **SQLAlchemy 2** en mode asynchrone, pilote **psycopg 3** (`postgresql+psycopg`).
 - **Alembic** dans `backend/migrations/` ; migration initiale `0001_schema_v0` issue du
-  [schéma v0](specs/schema-v0.md). Le DDL de référence reste documenté, une copie vendue est
-  utilisée par la migration et un test empêche la dérive.
-- L'image API contient `alembic.ini` et `migrations/`. Compose exécute le service one-shot
-  `migrate` (`alembic upgrade head`) avant de démarrer l'API.
+  [schéma v0](specs/schema-v0.md), puis `0002_audit_log_truncate_guard` et
+  `0003_fk_indexes`. Le DDL de référence reste documenté, une copie vendue est utilisée par
+  la migration et un test empêche la dérive.
+- **Séparation des rôles PostgreSQL** : `workhub_owner` possède la base, le schéma et les
+  objets et applique les migrations ; `workhub_app` n'a que le DML runtime, sans DDL ni
+  `TRUNCATE`, et `audit_log` reste en `SELECT`/`INSERT`. `workhub` est réservé au bootstrap.
+- L'image API contient `alembic.ini` et `migrations/`. Compose enchaîne `db-bootstrap`, le
+  service one-shot `migrate` (`alembic upgrade head` avec l'URL owner), `db-grants`, puis
+  l'API avec l'URL app.
 - `shared/infrastructure/database.py` fournit `Base`, `create_engine()` et
   `create_session_factory()`. Les tests d'intégration démarrent un PostgreSQL jetable via
   **testcontainers** et appliquent les migrations.
@@ -107,8 +112,10 @@ Précisions d'implémentation :
 
 ## Frontend
 
-- **SPA React 19 + TypeScript strict** construite par **Vite 8**, servie par Nginx ; Tailwind 4
-  et composants shadcn/ui copiés dans `frontend/src/components/ui`.
+- **SPA React 19 + TypeScript strict** construite par **Vite 8**, servie par Nginx non
+  privilégié (uid 101, port 8080) ; Tailwind 4 et composants shadcn/ui copiés dans
+  `frontend/src/components/ui`. En-têtes CSP, `nosniff`, `DENY` frame, referrer et permissions
+  activés, `server_tokens off`.
 - **TanStack Router** pour les routes typées et **TanStack Query** pour le cache des données
   serveur ; aucune donnée métier n'est stockée hors du cache de requêtes.
 - **Contrat API unique** : `openapi-typescript` génère `src/api/schema.d.ts` depuis
@@ -128,7 +135,8 @@ Précisions d'implémentation :
 - Toutes les erreurs HTTP (404/405, validation, erreur métier, exception inattendue) utilisent
   la même enveloppe JSON et exposent `request_id` ; les entrées de validation sont filtrées.
 - `GET /api/v1/health` est typé par `HealthResponse` (`status: "ok"`, `version`), donc présent
-  dans les composants OpenAPI et dans le client TypeScript.
+  dans les composants OpenAPI et dans le client TypeScript ; les réponses 404/405/500 sont
+  documentées avec `ApiErrorResponse` dans le contrat OpenAPI.
 - Niveau réglable par `LOG_LEVEL` (défaut `INFO`), y compris dans Compose ; une valeur inconnue
   retombe sur `INFO` avec un avertissement.
 - OpenTelemetry reste une option non activée.

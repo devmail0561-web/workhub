@@ -168,7 +168,7 @@ erDiagram
 | Plans | `work_plan_version` | version de plan | modifiable en brouillon, immuable une fois publiée |
 | Plans | `work_plan_instance` | instance pour projet **ou** mission | exactement une cible (`num_nonnulls = 1`) |
 | Plans | `instance_node` | nœud phase/activité/tâche/sous-tâche | chemin unique par instance, overrides locaux |
-| Audit | `audit_log` | journal append-only | `UPDATE`/`DELETE` rejetés par trigger |
+| Audit | `audit_log` | journal append-only | `UPDATE`/`DELETE`/`TRUNCATE` rejetés par trigger |
 | Exécution | `execution_record` | trace d'exécution | tâche, version de plan, Skills utilisées, résultat |
 | Outils | `tool` | catalogue de scripts | slug unique, origine `import`/`created` |
 | Outils | `tool_version` | version de script | immuable hors cycle de vie |
@@ -248,6 +248,15 @@ Résultat : 29 tables, 16 triggers, DDL appliqué sans erreur, 12 scénarios d'i
 (blob, audit, versions, fichiers, FK composite d'épinglage, gel d'instance, plan publié,
 proposition, instantané, auto-dépendance, GC explicite).
 
+Le schéma appliqué par Alembic ajoute deux évolutions sans modifier le DDL v0 de référence :
+
+- **`0002_audit_log_truncate_guard`** : trigger `BEFORE TRUNCATE` sur `audit_log`, car les
+  triggers ligne par ligne ne couvrent pas `TRUNCATE` ;
+- **`0003_fk_indexes`** : 21 index couvrant les clés étrangères (dont 4 composites).
+
+État effectif après `alembic upgrade head` : **29 tables métier**, **17 triggers**, **42 FK**,
+**61 CHECK** et **80 index métier** (hors index de `alembic_version`).
+
 ## Limites connues
 
 - Le DDL est la **référence v0** ; il sera traduit en migration Alembic en E0-09, puis les
@@ -255,5 +264,7 @@ proposition, instantané, auto-dépendance, GC explicite).
 - La validation sémantique du SemVer (supériorité, branches de patch) et des manifestes reste
   applicative (E2-04/E2-06) : PostgreSQL ne valide que le format et l'unicité.
 - Les triggers d'immuabilité supposent que l'application se connecte avec un rôle non
-  superutilisateur ; un superutilisateur peut les contourner (à cadrer en E1/E13).
+  superutilisateur. Compose sépare désormais `workhub_owner` (migrations) et `workhub_app`
+  (runtime, sans DDL ni `TRUNCATE`) ; `workhub` reste le compte d'administration du bootstrap
+  et peut contourner les triggers, il ne doit pas être utilisé par l'API.
 - Aucune politique de rétention/GC des blobs orphelins n'est encore définie (E2-01/E13).

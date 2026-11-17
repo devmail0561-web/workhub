@@ -16,6 +16,7 @@ jobs:
   backend:
     name: Backend (lint, types, architecture, tests)
     runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 30
     if: >-
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
@@ -40,6 +41,7 @@ jobs:
 
     env:
       DATABASE_URL: postgresql+psycopg://workhub:workhub@localhost:55432/workhub_test
+      WORKHUB_TEST_DATABASE_URL: postgresql+psycopg://workhub:workhub@localhost:55432/workhub_test
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -75,6 +77,12 @@ jobs:
       - name: Architecture (import-linter)
         run: uv run lint-imports
 
+      - name: Vérifier upgrade/downgrade/upgrade Alembic
+        run: |
+          uv run alembic upgrade head
+          uv run alembic downgrade 0001_schema_v0
+          uv run alembic upgrade head
+
       - name: Tests (pytest)
         run: uv run pytest
 
@@ -84,6 +92,7 @@ jobs:
   cli:
     name: CLI (lint, types, tests, architecture)
     runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 20
     if: >-
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
@@ -128,6 +137,7 @@ jobs:
   frontend:
     name: Frontend (types, tests, build)
     runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 20
     if: >-
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
@@ -172,6 +182,7 @@ jobs:
   docker:
     name: Build Docker
     runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 30
     if: >-
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository

@@ -109,19 +109,27 @@ externes (`fastapi`, `sqlalchemy`, `workhub`).
   respecté), exécution sous l'utilisateur non privilégié `appuser` (uid 10001), `uvicorn` sur
   le port 8000.
 - `backend/.dockerignore` : exclut `.venv`, caches et tests.
-- `deploy/docker-compose.yml` : `db` (Postgres 16-alpine), `migrate` (one-shot
-  `alembic upgrade head`), `api` (build backend), `web` (build multi-étapes
-  `frontend/Dockerfile` : Node/pnpm puis Nginx, proxy `/api`), avec healthchecks et
-  `depends_on` sur l'état sain ; volume nommé `pgdata`. `POSTGRES_PASSWORD` est
-  **obligatoire** et les ports sont publiés sur `127.0.0.1` uniquement.
-- `deploy/.env.example` : identifiants Postgres, ports, `LOG_LEVEL` surchargeables.
+- `deploy/docker-compose.yml` : `db` (Postgres 16-alpine), `db-bootstrap` (rôles et
+  propriété des objets), `migrate` (one-shot `alembic upgrade head` avec `workhub_owner`),
+  `db-grants` (privilèges runtime), `api` (build backend, `workhub_app`) et `web` (build
+  multi-étapes `frontend/Dockerfile` : Node/pnpm puis Nginx non privilégié, proxy `/api`),
+  avec healthchecks et `depends_on` sur l'état sain ; volume nommé `pgdata`.
+  `POSTGRES_PASSWORD`, `WORKHUB_OWNER_PASSWORD` et `WORKHUB_APP_PASSWORD` sont
+  **obligatoires** et les ports sont publiés sur `127.0.0.1` uniquement.
+- **Rôles PostgreSQL** : `workhub` reste le compte d'administration du bootstrap ;
+  `workhub_owner` possède la base, le schéma, les tables, séquences et fonctions et applique
+  les migrations ; `workhub_app` ne reçoit que `CONNECT`, `USAGE` et le DML sur les tables et
+  séquences, sans `CREATE` sur `public` ni `UPDATE`/`DELETE`/`TRUNCATE` sur `audit_log`.
+- `deploy/.env.example` : identifiants Postgres, mots de passe owner/app, ports et
+  `LOG_LEVEL` surchargeables.
 
 ### E0-05 — Intégration continue
 
 `.github/workflows/ci.yml` comporte quatre jobs :
 
 - `backend` : uv + Python 3.12, `sync --frozen`, ruff lint/format, pyright, import-linter,
-  vérification du snapshot OpenAPI, pytest avec service PostgreSQL 16, `pip-audit` ;
+  vérification du snapshot OpenAPI, upgrade/downgrade/upgrade Alembic, pytest avec service
+  PostgreSQL 16 (`WORKHUB_TEST_DATABASE_URL`) et `pip-audit` ;
 - `cli` : ruff, pyright, import-linter, pytest, `pip-audit` ;
 - `frontend` : pnpm + Node 20, `install --frozen-lockfile`, `pnpm audit`, `tsc`, vérification
   de dérive des types OpenAPI, Vitest, build Vite ;
@@ -133,7 +141,9 @@ obsolètes (`concurrency`). Les jobs tournent sur le **runner self-hosted** du d
 problème de facturation du compte. Les PR issues de forks sont ignorées pour ne pas exécuter
 de code externe sur l'hôte ; `permissions: contents: read`, `persist-credentials: false` et
 les actions épinglées par SHA limitent la surface. Le service PostgreSQL de la CI publie
-`55432` pour éviter tout conflit avec la stack locale (`5432`).
+`55432` pour éviter tout conflit avec la stack locale (`5432`). Chaque job a un
+`timeout-minutes` ; les tests d'intégration utilisent le service PostgreSQL de la CI et
+exécutent aussi la migration descendante puis la remontée.
 
 Première exécution réelle et verte : run `43317081941` (backend, CLI et docker).
 
@@ -146,9 +156,12 @@ justification) et [`docs/specs/schema-v0.sql`](../specs/schema-v0.sql) (DDL exé
 - **29 tables** couvrant les entités critiques du plan §4 : identité/intégrations, projets et
   missions (squelette), Skills/blobs/versions, plans de travail, audit/exécution, outils,
   exigences, propositions et profil technique de projet.
-- **16 triggers** garantissent en base l'immuabilité des versions, fichiers, blobs,
+- **16 triggers v0** garantissent en base l'immuabilité des versions, fichiers, blobs,
   instantanés et du journal d'audit, ainsi que les machines à états (versions, propositions) et
-  le gel de `template_version_id`.
+  le gel de `template_version_id` ; la migration `0002` ajoute un 17e trigger
+  `BEFORE TRUNCATE` sur `audit_log`.
+- **Index des FK** : la migration `0003` ajoute 21 index (17 simples, 4 composites), portant
+  le schéma à 80 index métier hors `alembic_version`.
 - **Contraintes structurelles** : `UNIQUE(skill_id, semver)`, FK composites
   `(version_id, skill_id)` pour l'épinglage/déploiement, `CHECK` de forme sur les exigences,
   hash et taille des blobs vérifiés, chemins de fichiers sûrs, exactement une cible par
@@ -223,14 +236,17 @@ types de `shared.domain`) tout en continuant d'interdire tout accès direct aux 
   reste identique à [`docs/specs/schema-v0.sql`](../specs/schema-v0.sql).
 - **`migrations/sql_split.py`** : découpage SQL conscient des chaînes, commentaires et blocs
   `$$`, car `psycopg` n'accepte pas plusieurs instructions par `execute`.
-- **Downgrade** : supprime les 29 tables puis les fonctions, en laissant `alembic_version`
-  cohérent (`base`).
+- **Migrations complémentaires** : `0002_audit_log_truncate_guard` protège `audit_log` contre
+  `TRUNCATE` et `0003_fk_indexes` ajoute la couverture des clés étrangères.
+- **Downgrade** : `0003` puis `0002` sont réversibles, puis la migration initiale supprime les
+  29 tables et les fonctions, en laissant `alembic_version` cohérent (`base`).
 - **Infrastructure partagée** : `shared/infrastructure/database.py` expose une `Base`
   déclarative, `create_engine()` et `create_session_factory()` (moteur asynchrone).
-- **Tests d'intégration** : fixture `testcontainers` (`postgres:16-alpine`), migration appliquée
-  via Alembic, session async. Surcharge possible par `WORKHUB_TEST_DATABASE_URL`. Les tests
-  vérifient la version de migration, l'existence des tables, les 16 triggers, le `CHECK` de
-  hash des blobs et l'append-only de `audit_log`.
+- **Tests d'intégration** : fixture `testcontainers` (`postgres:16-alpine`) ou service
+  PostgreSQL de la CI via `WORKHUB_TEST_DATABASE_URL`, migration appliquée par Alembic,
+  session async. Les tests vérifient la version `0003_fk_indexes`, l'existence des tables,
+  les 17 triggers, les 21 index de FK, le `CHECK` de hash des blobs, l'append-only et le rejet
+  de `TRUNCATE` sur `audit_log`, ainsi que l'exécution de `schema-v0.verify.sql`.
 
 Commandes :
 
@@ -373,31 +389,32 @@ Noyau partagé et enveloppe d'erreur (critère E0-08) :
 ```bash
 cd backend
 uv run ruff check .          # All checks passed!
-uv run ruff format --check . # 84 files already formatted
+uv run ruff format --check . # 100 files already formatted
 uv run pyright               # 0 errors, 0 warnings
 uv run lint-imports          # Contracts: 6 kept, 0 broken.
-uv run pytest -q             # 42 passed, couverture 100 %
+uv run pytest -q             # 74 passed, couverture 100 %
 ```
 
 Migrations et tests d'intégration (critère E0-09) :
 
 ```bash
 cd backend
-uv run pytest -q                    # 55 passed, couverture 100 %
-DATABASE_URL=postgresql+psycopg://workhub:change-me@localhost:5432/workhub_alembic_test \
-  uv run alembic upgrade head       # 0001_schema_v0 (head)
-DATABASE_URL=postgresql+psycopg://workhub:change-me@localhost:5432/workhub_alembic_test \
+uv run pytest -q                    # 74 passed, couverture 100 %
+DATABASE_URL=postgresql+psycopg://workhub_owner:change-me-owner@localhost:5432/workhub_alembic_test \
+  uv run alembic upgrade head       # 0003_fk_indexes (head)
+DATABASE_URL=postgresql+psycopg://workhub_owner:change-me-owner@localhost:5432/workhub_alembic_test \
   uv run alembic downgrade base     # retour à l'état vide
 ```
 
-Après `upgrade` : 30 tables (`29` métier + `alembic_version`) et 16 triggers ; après
-`downgrade base` : uniquement `alembic_version`.
+Après `upgrade` : 30 tables (`29` métier + `alembic_version`), 17 triggers, 42 FK, 61 CHECK
+et 80 index métier (81 avec `alembic_version`) ; après `downgrade base` : uniquement
+`alembic_version`.
 
 Logs et `request_id` (critère E0-10) :
 
 ```bash
 cd backend
-uv run pytest -q             # 70 passed, couverture 100 % (correctifs post-audit inclus)
+uv run pytest -q             # 74 passed, couverture 100 % (correctifs post-audit inclus)
 docker logs workhub-api-1    # une ligne JSON par requête, avec request_id
 ```
 
@@ -418,13 +435,22 @@ Stack Docker (critère E0-04) :
 ```text
 workhub-db-1    Up (healthy)   127.0.0.1:5432->5432/tcp
 workhub-api-1   Up (healthy)   127.0.0.1:8000->8000/tcp  (User=appuser)
-workhub-web-1   Up (healthy)   127.0.0.1:8080->80/tcp
+workhub-web-1   Up (healthy)   127.0.0.1:8080->8080/tcp  (User=nginx)
+workhub-db-bootstrap-1  Exited (0)
+workhub-db-grants-1     Exited (0)
 
 GET http://localhost:8000/api/v1/health
 {"status":"ok","version":"0.1.0"}
 GET http://localhost:8080/api/v1/health   (via Nginx)
 {"status":"ok","version":"0.1.0"}
 ```
+
+Vérifications des rôles : `workhub_owner` et `workhub_app` sont non-superuser ;
+`workhub_app` a `can_create = false` sur `public`, `INSERT` mais pas
+`UPDATE`/`DELETE`/`TRUNCATE` sur `audit_log`. Un `TRUNCATE audit_log` échoue par permission
+pour l'app et par trigger pour l'owner. La séquence complète a aussi été validée sur un projet
+Compose neuf (`db-bootstrap` → `migrate` → `db-grants`), avec `0003_fk_indexes`, 17 triggers,
+80 index métier et `schema-v0.verify.sql` OK.
 
 ## Correctifs post-audit (2026-11-15)
 
@@ -444,9 +470,28 @@ périmètre fonctionnel de E0 :
   exécute le service one-shot `migrate` avant l'API.
 - **Healthchecks** : API et web utilisent `127.0.0.1` (le `localhost` IPv6 de BusyBox causait
   un faux `unhealthy` du conteneur web).
-- **CI** : `permissions: contents: read`, `persist-credentials: false`, actions épinglées par
-  SHA, PR de forks ignorées sur le runner self-hosted, contrôle du snapshot OpenAPI, dérive
-  des types TypeScript et `pnpm audit`.
+- **CI et gouvernance** : `permissions: contents: read`, `persist-credentials: false`,
+  actions épinglées par SHA et `sha_pinning_required: true`, PR de forks ignorées sur le
+  runner self-hosted, contrôle du snapshot OpenAPI, dérive des types TypeScript et
+  `pnpm audit` ; `timeout-minutes` par job, tests d'intégration sur le service PostgreSQL
+  (`WORKHUB_TEST_DATABASE_URL`) et vérification upgrade/downgrade/upgrade Alembic. La branche
+  `main` est protégée : les quatre checks CI sont requis, force-push et suppression sont
+  interdits (`enforce_admins: false` pour conserver le bypass administrateur).
+- **Rôles PostgreSQL** : `db-bootstrap` crée `workhub_owner` et `workhub_app`, transfère la
+  propriété de la base, du schéma et des objets ; `migrate` utilise l'URL owner et l'API
+  l'URL app. `workhub_app` n'a ni `CREATE` sur `public`, ni `UPDATE`/`DELETE`/`TRUNCATE` sur
+  `audit_log`.
+- **Audit append-only** : migration `0002_audit_log_truncate_guard` et test d'intégration
+  vérifiant le rejet de `TRUNCATE audit_log`.
+- **Performance** : migration `0003_fk_indexes` avec 21 index couvrant les FK (17 simples,
+  4 composites).
+- **Durcissement web** : image `nginx-unprivileged` (uid 101, port 8080), `server_tokens off`,
+  en-têtes CSP/nosniff/frame/referrer/permissions, `/healthz` en `text/plain` et propagation
+  `X-Forwarded-Proto`/`X-Forwarded-Host`. Uvicorn est lancé avec `--no-server-header`.
+- **Contrat OpenAPI** : les réponses 404/405/500 sont documentées avec `ApiErrorResponse` ;
+  snapshot et client TypeScript régénérés.
+- **Validation du schéma** : les tests d'intégration exécutent `schema-v0.verify.sql` après
+  migration et vérifient la version `0003_fk_indexes`, les 17 triggers et les 21 index.
 
 Commandes exécutées le 2026-11-15 :
 
@@ -456,7 +501,7 @@ uv run ruff format .          # 1 fichier reformatté
 uv run ruff check .           # All checks passed!
 uv run pyright                # 0 errors, 0 warnings
 uv run lint-imports           # Contracts: 6 kept, 0 broken.
-uv run pytest -q              # 70 passed, couverture 100 %
+uv run pytest -q              # 74 passed, couverture 100 %
 
 cd ../frontend
 pnpm run typecheck            # aucune erreur
@@ -479,9 +524,9 @@ POST /api/v1/health        -> 405 enveloppe JSON + Allow: GET
 tables PostgreSQL          -> 30 (29 métier + alembic_version)
 ```
 
-Restent ouverts, hors de ce lot : index des FK, triggers `TRUNCATE`/séparation des rôles DB,
-tests CI du script `schema-v0.verify.sql` et du downgrade, scan d'images et durcissement
-Nginx/frontend (voir le rapport d'audit).
+Restent ouverts, hors de ce lot : isolation éphémère du runner self-hosted, scan d'images,
+et validation du workflow CI courant par un run GitHub (le commit local n'est pas encore
+poussé).
 
 ## Limites connues
 

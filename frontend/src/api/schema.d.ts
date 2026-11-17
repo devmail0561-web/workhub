@@ -29,6 +29,29 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
+         * ApiErrorBody
+         * @description Corps d'une erreur API.
+         */
+        ApiErrorBody: {
+            /** Code */
+            code: string;
+            /** Message */
+            message: string;
+            /** Details */
+            details?: {
+                [key: string]: unknown;
+            };
+            /** Request Id */
+            request_id?: string | null;
+        };
+        /**
+         * ApiErrorResponse
+         * @description Enveloppe unique des erreurs REST.
+         */
+        ApiErrorResponse: {
+            error: components["schemas"]["ApiErrorBody"];
+        };
+        /**
          * HealthResponse
          * @description Réponse de la sonde de santé.
          */
@@ -66,6 +89,33 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HealthResponse"];
+                };
+            };
+            /** @description Ressource introuvable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Méthode non autorisée */
+            405: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Erreur interne */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };

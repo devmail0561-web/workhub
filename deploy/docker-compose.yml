@@ -1,9 +1,16 @@
 name: workhub
 
-x-api-environment: &api-environment
+x-common-environment: &common-environment
   WORKHUB_ENV: ${WORKHUB_ENV:-development}
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
-  DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-workhub}:${POSTGRES_PASSWORD:?Définir POSTGRES_PASSWORD dans deploy/.env}@db:5432/${POSTGRES_DB:-workhub}
+
+x-app-environment: &app-environment
+  <<: *common-environment
+  DATABASE_URL: postgresql+psycopg://workhub_app:${WORKHUB_APP_PASSWORD:?Définir WORKHUB_APP_PASSWORD dans deploy/.env}@db:5432/${POSTGRES_DB:-workhub}
+
+x-owner-environment: &owner-environment
+  <<: *common-environment
+  DATABASE_URL: postgresql+psycopg://workhub_owner:${WORKHUB_OWNER_PASSWORD:?Définir WORKHUB_OWNER_PASSWORD dans deploy/.env}@db:5432/${POSTGRES_DB:-workhub}
 
 services:
   db:
@@ -23,23 +30,58 @@ services:
       retries: 10
     restart: unless-stopped
 
-  migrate:
-    build:
-      context: ../backend
-    command: ["alembic", "upgrade", "head"]
-    environment: *api-environment
+  db-bootstrap:
+    image: postgres:16-alpine
+    entrypoint: ["/bin/sh", "/bootstrap.sh"]
+    environment:
+      PGHOST: db
+      PGPORT: "5432"
+      POSTGRES_USER: ${POSTGRES_USER:-workhub}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Définir POSTGRES_PASSWORD dans deploy/.env}
+      POSTGRES_DB: ${POSTGRES_DB:-workhub}
+      WORKHUB_OWNER_PASSWORD: ${WORKHUB_OWNER_PASSWORD:?Définir WORKHUB_OWNER_PASSWORD dans deploy/.env}
+      WORKHUB_APP_PASSWORD: ${WORKHUB_APP_PASSWORD:?Définir WORKHUB_APP_PASSWORD dans deploy/.env}
+    volumes:
+      - ./postgres/bootstrap.sh:/bootstrap.sh:ro
     depends_on:
       db:
         condition: service_healthy
 
+  migrate:
+    build:
+      context: ../backend
+    command: ["alembic", "upgrade", "head"]
+    environment: *owner-environment
+    depends_on:
+      db:
+        condition: service_healthy
+      db-bootstrap:
+        condition: service_completed_successfully
+
+  db-grants:
+    image: postgres:16-alpine
+    entrypoint: ["/bin/sh", "/permissions.sh"]
+    environment:
+      PGHOST: db
+      PGPORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:-workhub}
+      WORKHUB_OWNER_PASSWORD: ${WORKHUB_OWNER_PASSWORD:?Définir WORKHUB_OWNER_PASSWORD dans deploy/.env}
+    volumes:
+      - ./postgres/permissions.sh:/permissions.sh:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
   api:
     build:
       context: ../backend
-    environment: *api-environment
+    environment: *app-environment
     depends_on:
       db:
         condition: service_healthy
       migrate:
+        condition: service_completed_successfully
+      db-grants:
         condition: service_completed_successfully
     ports:
       - "127.0.0.1:${API_PORT:-8000}:8000"
@@ -57,9 +99,9 @@ services:
       api:
         condition: service_healthy
     ports:
-      - "127.0.0.1:${WEB_PORT:-8080}:80"
+      - "127.0.0.1:${WEB_PORT:-8080}:8080"
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1/healthz"]
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8080/healthz"]
       interval: 10s
       timeout: 5s
       retries: 10

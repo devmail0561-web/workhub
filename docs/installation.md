@@ -43,12 +43,14 @@ ne parle à WorkHub que par HTTP. Cette contrainte est vérifiée par `import-li
 ## Lancer la stack locale
 
 ```bash
-cp deploy/.env.example deploy/.env     # POSTGRES_PASSWORD est obligatoire
+cp deploy/.env.example deploy/.env     # définir les trois mots de passe
 docker compose -f deploy/docker-compose.yml up -d --build
 ```
 
-`POSTGRES_PASSWORD` n'a pas de valeur par défaut : Compose refuse de démarrer tant qu'il n'est
-pas défini dans `deploy/.env`. Les ports sont publiés sur `127.0.0.1` uniquement (accès local).
+`POSTGRES_PASSWORD`, `WORKHUB_OWNER_PASSWORD` et `WORKHUB_APP_PASSWORD` n'ont pas de valeur par
+défaut : Compose refuse de démarrer tant qu'ils ne sont pas définis dans `deploy/.env`.
+`POSTGRES_USER` sert uniquement au bootstrap ; les migrations utilisent `workhub_owner` et
+l'API `workhub_app`. Les ports sont publiés sur `127.0.0.1` uniquement (accès local).
 
 Services démarrés :
 
@@ -59,8 +61,9 @@ Services démarrés :
 | Web | http://localhost:8080 | SPA React servie par Nginx, proxy `/api` |
 | PostgreSQL | `localhost:5432` | base de données |
 
-Le service `migrate` n'est pas un serveur : il se termine normalement (`Exited (0)`) après avoir
-appliqué le schéma.
+Les services `db-bootstrap`, `migrate` et `db-grants` ne sont pas des serveurs : ils se
+terminent normalement (`Exited (0)`) après avoir préparé les rôles, appliqué les migrations et
+accordé les privilèges runtime.
 
 Vérification :
 
@@ -81,13 +84,14 @@ pnpm install --frozen-lockfile
 pnpm run dev          # http://localhost:5173, proxy /api vers :8000
 ```
 
-Compose applique les migrations automatiquement : le service one-shot `migrate` exécute
-`alembic upgrade head` après le healthcheck de PostgreSQL, puis l'API démarre lorsque la
-migration a réussi. Pour un backend lancé hors Compose :
+Compose prépare la base automatiquement : `db-bootstrap` crée `workhub_owner` et
+`workhub_app`, `migrate` exécute `alembic upgrade head` avec l'URL owner, `db-grants` accorde
+les privilèges runtime, puis l'API démarre avec l'URL app. Pour un backend lancé hors Compose,
+utiliser un rôle de migration puis un rôle runtime distinct :
 
 ```bash
 cd backend
-export DATABASE_URL="postgresql+psycopg://workhub:<mot-de-passe>@localhost:5432/workhub"
+export DATABASE_URL="postgresql+psycopg://workhub_owner:<mot-de-passe-owner>@localhost:5432/workhub"
 uv run alembic upgrade head
 ```
 

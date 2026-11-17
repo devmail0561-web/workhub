@@ -44,6 +44,13 @@ class ApiErrorResponse(BaseModel):
     error: ApiErrorBody
 
 
+ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    404: {"model": ApiErrorResponse, "description": "Ressource introuvable"},
+    405: {"model": ApiErrorResponse, "description": "Méthode non autorisée"},
+    500: {"model": ApiErrorResponse, "description": "Erreur interne"},
+}
+
+
 _STATUS_BY_ERROR: tuple[tuple[type[WorkHubError], int], ...] = (
     (ValidationError, 422),
     (AuthenticationError, 401),

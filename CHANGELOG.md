@@ -10,6 +10,13 @@ développement : la version `0.1.0` correspond à l'amorçage, sans release publ
 
 ### Added
 
+- **Durcissement base de données** : rôles `workhub_owner` (migrations) et `workhub_app`
+  (runtime, sans DDL ni `TRUNCATE`), scripts `deploy/postgres/bootstrap.sh` et
+  `permissions.sh`, services Compose `db-bootstrap` et `db-grants`.
+- **Migrations de durcissement** : `0002_audit_log_truncate_guard` (trigger `BEFORE TRUNCATE`
+  sur `audit_log`) et `0003_fk_indexes` (21 index couvrant les FK, dont 4 composites).
+- **Contrat OpenAPI** : réponses 404/405/500 documentées avec `ApiErrorResponse` et client
+  TypeScript régénéré.
 - **Squelette frontend (E0-11)** : Vite 8 + React 19 + TypeScript strict, Tailwind 4,
   shadcn/ui, TanStack Router/Query, client OpenAPI généré (`openapi-typescript` +
   `openapi-fetch`) ; page `/` appelant `/api/v1/health`, proxy même origine (Vite/Nginx),
@@ -54,6 +61,13 @@ développement : la version `0.1.0` correspond à l'amorçage, sans release publ
 
 ### Changed
 
+- **Durcissement web** : image `nginx-unprivileged` (uid 101, port 8080), `server_tokens off`,
+  en-têtes CSP/`nosniff`/`DENY`/referrer/permissions, `/healthz` en `text/plain` et propagation
+  des en-têtes `X-Forwarded-*` ; Uvicorn sans en-tête `Server`.
+- **CI et gouvernance** : `timeout-minutes` par job, tests d'intégration sur le service
+  PostgreSQL via `WORKHUB_TEST_DATABASE_URL`, vérification upgrade/downgrade/upgrade Alembic,
+  exécution de `schema-v0.verify.sql` dans pytest, `sha_pinning_required: true` et protection
+  de `main` avec les quatre checks CI requis (force-push et suppression interdits).
 - **Correctifs post-audit** : `/api/v1/health` est typé (`HealthResponse`) et l'enveloppe
   d'erreur couvre aussi 404/405/500 ; Compose exécute un service one-shot `migrate` avant
   l'API ; la CI verrouille les permissions, épingle les actions par SHA et refuse les PR de
@@ -66,6 +80,10 @@ développement : la version `0.1.0` correspond à l'amorçage, sans release publ
 
 ### Fixed
 
+- **`TRUNCATE audit_log`** : l'append-only est désormais protégé aussi au niveau statement ;
+  `workhub_app` n'a pas le privilège et le trigger rejette l'opération côté owner.
+- **FK sans index** : 21 index ajoutés pour éviter les parcours séquentiels lors des
+  vérifications et suppressions de parents.
 - **Enveloppe d'erreur** : 404/405 renvoyaient `{"detail": ...}`, 422 avait `request_id: null`
   et 500 renvoyait `text/plain` sans `X-Request-ID` ; tous les cas utilisent désormais
   `{"error": ...}` avec l'identifiant, et les entrées de validation ne sont plus exposées.
@@ -102,5 +120,5 @@ développement : la version `0.1.0` correspond à l'amorçage, sans release publ
   voir le rapport d'audit.
 - Le runner self-hosted reste requis ; les PR issues de forks sont désormais ignorées pour ne
   pas exécuter de code externe sur l'hôte. Une isolation éphémère du runner reste recommandée.
-- Le durcissement CI (Snapshot OpenAPI, `pnpm audit`, actions épinglées) sera validé par le
-  prochain run GitHub.
+- La branche `main` est protégée par les checks CI requis et l'épinglage SHA des actions est
+  imposé ; le prochain run GitHub validera le workflow courant.
