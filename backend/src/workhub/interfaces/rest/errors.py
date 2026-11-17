@@ -45,6 +45,7 @@ class ApiErrorResponse(BaseModel):
 
 
 ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    401: {"model": ApiErrorResponse, "description": "Authentification requise"},
     404: {"model": ApiErrorResponse, "description": "Ressource introuvable"},
     405: {"model": ApiErrorResponse, "description": "Méthode non autorisée"},
     500: {"model": ApiErrorResponse, "description": "Erreur interne"},
@@ -140,7 +141,11 @@ def install_error_handlers(app: FastAPI) -> None:
                 request_id=request_id,
             )
         )
-        return _json_response(status_for(exc), body, headers=_headers(request_id))
+        status = status_for(exc)
+        headers = _headers(request_id)
+        if isinstance(exc, AuthenticationError):
+            headers["WWW-Authenticate"] = "Bearer"
+        return _json_response(status, body, headers=headers)
 
     @app.exception_handler(StarletteHTTPException)
     async def _handle_http_error(request: Request, exc: StarletteHTTPException) -> JSONResponse:

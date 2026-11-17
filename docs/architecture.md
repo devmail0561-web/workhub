@@ -95,9 +95,10 @@ Précisions d'implémentation :
 
 - **SQLAlchemy 2** en mode asynchrone, pilote **psycopg 3** (`postgresql+psycopg`).
 - **Alembic** dans `backend/migrations/` ; migration initiale `0001_schema_v0` issue du
-  [schéma v0](specs/schema-v0.md), puis `0002_audit_log_truncate_guard` et
-  `0003_fk_indexes`. Le DDL de référence reste documenté, une copie vendue est utilisée par
-  la migration et un test empêche la dérive.
+  [schéma v0](specs/schema-v0.md), puis `0002_audit_log_truncate_guard`,
+  `0003_fk_indexes` et `0004_auth_sessions` (`app_user.is_admin`, table `session`). Le DDL de
+  référence reste documenté, une copie vendue est utilisée par la migration et un test empêche
+  la dérive.
 - **Séparation des rôles PostgreSQL** : `workhub_owner` possède la base, le schéma et les
   objets et applique les migrations ; `workhub_app` n'a que le DML runtime, sans DDL ni
   `TRUNCATE`, et `audit_log` reste en `SELECT`/`INSERT`. `workhub` est réservé au bootstrap.
@@ -109,6 +110,10 @@ Précisions d'implémentation :
   **testcontainers** et appliquent les migrations.
 - Les migrations sont **synchrones** (déploiement) ; l'application utilise un moteur
   asynchrone.
+- **Authentification** : le module `iam` compose le service via `iam/api.py` ; les interfaces
+  ne voient que `AuthService` et les DTO publics. Les mots de passe sont hachés en argon2id,
+  les JWT d'accès sont courts et les refresh tokens opaques sont stockés hachés en SHA-256
+  dans `session`, avec rotation atomique et révocation.
 
 ## Frontend
 

@@ -27,6 +27,7 @@
 
 ```mermaid
 erDiagram
+    APP_USER ||--o{ SESSION : ouvre
     APP_USER ||--o{ INTEGRATION : possede
     INTEGRATION ||--o{ API_TOKEN : emet
     APP_USER ||--o{ PROJECT : possede
@@ -38,6 +39,14 @@ erDiagram
         uuid id PK
         text email UK
         text password_hash
+        boolean is_admin
+    }
+    SESSION {
+        uuid id PK
+        uuid user_id FK
+        bytea refresh_token_sha256 UK
+        timestamptz expires_at
+        timestamptz revoked_at
     }
     INTEGRATION {
         uuid id PK
@@ -146,11 +155,12 @@ erDiagram
     }
 ```
 
-## Inventaire des tables (29)
+## Inventaire des tables (30)
 
 | Domaine | Table | Rôle | Points clés |
 |---|---|---|---|
-| Identité | `app_user` | utilisateurs | e-mail unique insensible à la casse (index `lower(email)`) |
+| Identité | `app_user` | utilisateurs | e-mail unique insensible à la casse (index `lower(email)`), indicateur `is_admin` |
+| Identité | `session` | refresh tokens | hash SHA-256 unique, expiration, révocation, rotation |
 | Identité | `integration` | environnements/agents connectés | propriétaire, révocation |
 | Identité | `api_token` | jetons d'intégration | hash SHA-256 unique, scopes non vides |
 | Projets | `project` | squelette projet | slug unique ; champs métier complétés en E3-01 |
@@ -218,7 +228,7 @@ erDiagram
 | Table / concept | Tâche |
 |---|---|
 | Champs complets `project`, `mission` | E3-01, E3-03 |
-| `session` (refresh tokens), `token_project_scope` | E1-02, E1-06 |
+| `token_project_scope` | E1-06 |
 | `role`, `competency`, preuves de compétence | E5 |
 | Blocages, livrables, détails d'exécution | E9 |
 | Synchronisation d'intégration (état, curseurs) | E8 |
@@ -248,14 +258,17 @@ Résultat : 29 tables, 16 triggers, DDL appliqué sans erreur, 12 scénarios d'i
 (blob, audit, versions, fichiers, FK composite d'épinglage, gel d'instance, plan publié,
 proposition, instantané, auto-dépendance, GC explicite).
 
-Le schéma appliqué par Alembic ajoute deux évolutions sans modifier le DDL v0 de référence :
+Le schéma appliqué par Alembic ajoute trois évolutions sans modifier le DDL v0 de référence :
 
 - **`0002_audit_log_truncate_guard`** : trigger `BEFORE TRUNCATE` sur `audit_log`, car les
   triggers ligne par ligne ne couvrent pas `TRUNCATE` ;
-- **`0003_fk_indexes`** : 21 index couvrant les clés étrangères (dont 4 composites).
+- **`0003_fk_indexes`** : 21 index couvrant les clés étrangères (dont 4 composites) ;
+- **`0004_auth_sessions`** : colonne `app_user.is_admin` et table `session` (refresh tokens
+  hachés, rotation, révocation), avec index sur l'utilisateur, l'expiration et le hash.
 
-État effectif après `alembic upgrade head` : **29 tables métier**, **17 triggers**, **42 FK**,
-**61 CHECK** et **80 index métier** (hors index de `alembic_version`).
+État effectif après `alembic upgrade head` : **30 tables métier** (31 avec `alembic_version`),
+**17 triggers**, **43 FK**, **63 CHECK** portés par des tables (65 contraintes `CHECK` au total
+avec les deux contraintes de domaine) et **84 index** hors `alembic_version`.
 
 ## Limites connues
 

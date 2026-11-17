@@ -552,3 +552,7 @@ poussé).
 
 1. **E1-01** — entité `User`, hash argon2id et amorçage du premier administrateur par le CLI.
 2. **E1-02** — sessions JWT d'accès court + refresh cookie `HttpOnly`, rotation et logout.
+
+> **Mise à jour 2026-11-17** — les suites E1-01/E1-02 sont implémentées. La migration
+> `0004_auth_sessions` ajoute `app_user.is_admin` et la table `session` (30 tables métier,
+> 43 FK). Voir [E1 — Identité et authentification](E1-iam.md).

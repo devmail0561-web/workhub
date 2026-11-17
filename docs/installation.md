@@ -43,12 +43,13 @@ ne parle à WorkHub que par HTTP. Cette contrainte est vérifiée par `import-li
 ## Lancer la stack locale
 
 ```bash
-cp deploy/.env.example deploy/.env     # définir les trois mots de passe
+cp deploy/.env.example deploy/.env     # définir les secrets et mots de passe
 docker compose -f deploy/docker-compose.yml up -d --build
 ```
 
-`POSTGRES_PASSWORD`, `WORKHUB_OWNER_PASSWORD` et `WORKHUB_APP_PASSWORD` n'ont pas de valeur par
-défaut : Compose refuse de démarrer tant qu'ils ne sont pas définis dans `deploy/.env`.
+`POSTGRES_PASSWORD`, `WORKHUB_OWNER_PASSWORD`, `WORKHUB_APP_PASSWORD` et
+`WORKHUB_SECRET_KEY` n'ont pas de valeur par défaut : Compose refuse de démarrer tant qu'ils ne
+sont pas définis dans `deploy/.env`. Le secret JWT doit contenir au moins 32 caractères.
 `POSTGRES_USER` sert uniquement au bootstrap ; les migrations utilisent `workhub_owner` et
 l'API `workhub_app`. Les ports sont publiés sur `127.0.0.1` uniquement (accès local).
 
@@ -103,7 +104,32 @@ docker compose -f deploy/docker-compose.yml down -v    # supprime aussi les donn
 ```
 
 Les ports sont surchargeables dans `deploy/.env` (`API_PORT`, `WEB_PORT`, `POSTGRES_PORT`).
-Le niveau de log se règle avec `LOG_LEVEL` (`INFO` par défaut).
+Le niveau de log se règle avec `LOG_LEVEL` (`INFO` par défaut). `WORKHUB_COOKIE_SECURE=true`
+est requis derrière HTTPS ; la valeur `false` de l'exemple permet les tests en HTTP local.
+
+## Créer le premier administrateur
+
+Aucun compte par défaut n'est créé. Après le démarrage de la stack, exécuter la commande
+d'amorçage avec un mot de passe fourni hors ligne de commande (variable ou saisie interactive) :
+
+```bash
+docker compose -f deploy/docker-compose.yml exec \
+  -e WORKHUB_BOOTSTRAP_PASSWORD='<mot-de-passe-de-12-caracteres-minimum>' \
+  api workhub-bootstrap --email admin@example.test --display-name Admin
+```
+
+Puis vérifier la connexion :
+
+```bash
+curl -fsS -c /tmp/workhub-cookies.txt \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"admin@example.test","password":"<mot-de-passe>"}' \
+  http://localhost:8000/api/v1/auth/login
+```
+
+Le refresh token est déposé dans le cookie `HttpOnly` `workhub_refresh` (chemin
+`/api/v1/auth`), jamais dans le corps de la réponse. `POST /api/v1/auth/refresh` le fait tourner,
+`POST /api/v1/auth/logout` le révoque et `GET /api/v1/auth/me` vérifie le JWT d'accès.
 
 ## Dépannage
 

@@ -1,6 +1,6 @@
 # ADR 004 — Identité : Principal, intégrations, jetons et scopes
 
-- **Statut** : acceptée
+- **Statut** : acceptée, partiellement implémentée (E1-01/E1-02)
 - **Date** : 2026-11-13
 - **Tâche** : E0-07
 - **Décisions liées** : D3, D6 (plan §0)

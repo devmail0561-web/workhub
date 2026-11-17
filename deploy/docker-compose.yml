@@ -7,6 +7,10 @@ x-common-environment: &common-environment
 x-app-environment: &app-environment
   <<: *common-environment
   DATABASE_URL: postgresql+psycopg://workhub_app:${WORKHUB_APP_PASSWORD:?Définir WORKHUB_APP_PASSWORD dans deploy/.env}@db:5432/${POSTGRES_DB:-workhub}
+  WORKHUB_SECRET_KEY: ${WORKHUB_SECRET_KEY:?Définir WORKHUB_SECRET_KEY dans deploy/.env}
+  WORKHUB_COOKIE_SECURE: ${WORKHUB_COOKIE_SECURE:-false}
+  WORKHUB_ACCESS_TOKEN_TTL_SECONDS: ${WORKHUB_ACCESS_TOKEN_TTL_SECONDS:-900}
+  WORKHUB_REFRESH_TOKEN_TTL_SECONDS: ${WORKHUB_REFRESH_TOKEN_TTL_SECONDS:-2592000}
 
 x-owner-environment: &owner-environment
   <<: *common-environment

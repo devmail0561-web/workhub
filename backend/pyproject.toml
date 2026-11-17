@@ -7,10 +7,12 @@ license = { text = "MIT" }
 requires-python = ">=3.12"
 dependencies = [
     "alembic>=1.14",
+    "argon2-cffi>=23.1",
     "fastapi>=0.115",
     "psycopg[binary]>=3.2",
     "pydantic>=2.9",
     "pydantic-settings>=2.5",
+    "pyjwt>=2.9",
     "sqlalchemy[asyncio]>=2.0",
     "structlog>=24.4",
     "uvicorn[standard]>=0.32",
@@ -29,6 +31,9 @@ dev = [
     "ruff>=0.8",
     "testcontainers[postgres]>=4.9",
 ]
+
+[project.scripts]
+workhub-bootstrap = "workhub.iam.bootstrap:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -130,7 +135,10 @@ type = "forbidden"
 source_modules = ["workhub.interfaces.rest", "workhub.interfaces.mcp"]
 forbidden_modules = ["workhub.*.domain", "workhub.*.infrastructure"]
 # Le noyau shared est autorisé via son api.py (réexporte des types de son domaine).
-ignore_imports = ["workhub.shared.api -> workhub.shared.domain.*"]
+ignore_imports = [
+    "workhub.shared.api -> workhub.shared.domain.*",
+    "workhub.interfaces.rest.auth -> workhub.iam.api",
+]
 
 [[tool.importlinter.contracts]]
 name = "6. Le noyau shared ne dépend d'aucun module métier"
@@ -170,4 +178,10 @@ forbidden_modules = [
     "workhub.shared.domain",
     "workhub.shared.application",
     "workhub.shared.infrastructure",
+]
+# `shared.api` est le point d'entrée autorisé ; ses réexports internes sont donc ignorés.
+# La primitive de persistance est consommée uniquement par l'adaptateur d'infrastructure.
+ignore_imports = [
+    "workhub.shared.api -> workhub.shared.domain.*",
+    "workhub.iam.infrastructure.database -> workhub.shared.infrastructure.database",
 ]

@@ -10,12 +10,18 @@ développement : la version `0.1.0` correspond à l'amorçage, sans release publ
 
 ### Added
 
+- **Authentification utilisateur (E1-01/E1-02)** : entité `User` et migration
+  `0004_auth_sessions` (`is_admin`, table `session`), hash **argon2id**, commande
+  `workhub-bootstrap` pour créer le premier administrateur sans compte par défaut, routes
+  `POST /api/v1/auth/login`, `POST /api/v1/auth/refresh`, `POST /api/v1/auth/logout` et
+  `GET /api/v1/auth/me`, JWT d'accès court et refresh token opaque en cookie `HttpOnly` /
+  `SameSite=Strict` avec rotation et révocation.
 - **Durcissement base de données** : rôles `workhub_owner` (migrations) et `workhub_app`
   (runtime, sans DDL ni `TRUNCATE`), scripts `deploy/postgres/bootstrap.sh` et
   `permissions.sh`, services Compose `db-bootstrap` et `db-grants`.
 - **Migrations de durcissement** : `0002_audit_log_truncate_guard` (trigger `BEFORE TRUNCATE`
   sur `audit_log`) et `0003_fk_indexes` (21 index couvrant les FK, dont 4 composites).
-- **Contrat OpenAPI** : réponses 404/405/500 documentées avec `ApiErrorResponse` et client
+- **Contrat OpenAPI** : réponses 401/404/405/500 documentées avec `ApiErrorResponse` et client
   TypeScript régénéré.
 - **Squelette frontend (E0-11)** : Vite 8 + React 19 + TypeScript strict, Tailwind 4,
   shadcn/ui, TanStack Router/Query, client OpenAPI généré (`openapi-typescript` +
@@ -72,6 +78,9 @@ développement : la version `0.1.0` correspond à l'amorçage, sans release publ
   d'erreur couvre aussi 404/405/500 ; Compose exécute un service one-shot `migrate` avant
   l'API ; la CI verrouille les permissions, épingle les actions par SHA et refuse les PR de
   forks sur le runner self-hosted.
+- **Configuration d'authentification** : `WORKHUB_SECRET_KEY` (32 caractères minimum),
+  `WORKHUB_COOKIE_SECURE`, durées des jetons et cookie `workhub_refresh` configurables ;
+  Compose refuse de démarrer sans secret JWT.
 - La définition de « terminé » exige désormais la mise à jour de la page d'implémentation de
   l'epic concerné (`docs/implementation/`) et une entrée dans ce changelog.
 - La configuration `pre-commit` est déplacée à la racine du dépôt avec un jeu de hooks par

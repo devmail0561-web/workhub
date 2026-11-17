@@ -20,13 +20,14 @@ Depuis `backend/` :
 | Commande | Rôle | Attendu |
 |---|---|---|
 | `uv run pytest` | tests + couverture (seuil 80 % global) | tous verts, seuil atteint |
-| `uv run pytest -m integration` | tests sur PostgreSQL réel (testcontainers) | 8 tests verts, Docker requis |
-| `uv run alembic upgrade head` | applique les migrations (`DATABASE_URL` prioritaire) | `0003_fk_indexes (head)` |
+| `uv run pytest -m integration` | tests sur PostgreSQL réel (testcontainers) | 11 tests verts, Docker requis |
+| `uv run alembic upgrade head` | applique les migrations (`DATABASE_URL` prioritaire) | `0004_auth_sessions (head)` |
 | `uv run ruff check .` | lint | `All checks passed!` |
 | `uv run ruff format --check .` | format | aucun fichier à reformater |
 | `uv run pyright` | typage strict | `0 errors` |
 | `uv run lint-imports` | règles d'architecture | tous les contrats `KEPT` |
 | `uv run pip-audit` | vulnérabilités des dépendances | `No known vulnerabilities found` |
+| `uv run workhub-bootstrap --email …` | crée le premier administrateur (mot de passe via `WORKHUB_BOOTSTRAP_PASSWORD` ou saisie) | compte créé, aucun compte par défaut |
 
 La couverture est mesurée à chaque `pytest` (`--cov=workhub`) avec un seuil bloquant de 80 %
 (`[tool.coverage.report] fail_under`). Le seuil spécifique du domaine (≥ 90 %, plan §10) sera

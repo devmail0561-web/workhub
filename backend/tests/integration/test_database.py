@@ -31,21 +31,35 @@ FK_INDEXES = {
     "ix_project_technology_tool_id",
     "ix_project_skill_allowlist_skill_id",
     "ix_project_profile_snapshot_project_id",
+    "ix_session_user_id",
 }
 
 
 async def test_migration_is_applied(session: AsyncSession) -> None:
     version = (await session.execute(text("select version_num from alembic_version"))).scalar_one()
 
-    assert version == "0003_fk_indexes"
+    assert version == "0004_auth_sessions"
 
 
 async def test_key_tables_exist(session: AsyncSession) -> None:
-    for name in ("skill", "blob", "audit_log", "work_plan_instance", "proposal"):
+    for name in ("skill", "blob", "audit_log", "work_plan_instance", "proposal", "session"):
         found = (
             await session.execute(text("select to_regclass(:name)"), {"name": f"public.{name}"})
         ).scalar_one()
         assert found == name
+
+
+async def test_app_user_has_admin_flag(session: AsyncSession) -> None:
+    column = (
+        await session.execute(
+            text(
+                "select data_type from information_schema.columns "
+                "where table_name = 'app_user' and column_name = 'is_admin'"
+            )
+        )
+    ).scalar_one()
+
+    assert column == "boolean"
 
 
 async def test_immutability_triggers_are_installed(session: AsyncSession) -> None:
