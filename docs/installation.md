@@ -106,6 +106,11 @@ docker compose -f deploy/docker-compose.yml down -v    # supprime aussi les donn
 Les ports sont surchargeables dans `deploy/.env` (`API_PORT`, `WEB_PORT`, `POSTGRES_PORT`).
 Le niveau de log se règle avec `LOG_LEVEL` (`INFO` par défaut). `WORKHUB_COOKIE_SECURE=true`
 est requis derrière HTTPS ; la valeur `false` de l'exemple permet les tests en HTTP local.
+Les tentatives de connexion sont limitées par IP et par compte : après
+`WORKHUB_LOGIN_MAX_ATTEMPTS` échecs dans la fenêtre
+`WORKHUB_LOGIN_ATTEMPT_WINDOW_SECONDS`, le couple est verrouillé pendant
+`WORKHUB_LOGIN_LOCK_SECONDS` (5 échecs, 15 min et 15 min par défaut). L'API répond alors
+`429` avec `Retry-After`.
 
 ## Créer le premier administrateur
 

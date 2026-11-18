@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import math
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 from workhub.iam.application.ports import AccessToken
 from workhub.iam.domain.session import Session
 from workhub.iam.domain.user import User
-from workhub.shared.api import AuthenticationError
+from workhub.shared.api import AuthenticationError, RateLimitedError
 
 
 class FakeClock:
@@ -20,6 +21,49 @@ class FakeClock:
 
     def advance(self, seconds: int) -> None:
         self.current += timedelta(seconds=seconds)
+
+
+class FakeLoginAttemptLimiter:
+    def __init__(
+        self,
+        clock: FakeClock,
+        *,
+        max_attempts: int = 5,
+        lock_seconds: int = 60,
+    ) -> None:
+        self.clock = clock
+        self.max_attempts = max_attempts
+        self.lock_seconds = lock_seconds
+        self.failures: dict[tuple[str, str], int] = {}
+        self.locks: dict[tuple[str, str], datetime] = {}
+
+    @staticmethod
+    def _keys(client_ip: str, email: str) -> tuple[tuple[str, str], ...]:
+        return (("ip", client_ip), ("account", email.lower()))
+
+    async def check(self, *, client_ip: str, email: str) -> None:
+        now = self.clock.now()
+        for key in self._keys(client_ip, email):
+            locked_until = self.locks.get(key)
+            if locked_until is not None and locked_until > now:
+                retry_after = max(1, math.ceil((locked_until - now).total_seconds()))
+                raise RateLimitedError(
+                    "Trop de tentatives de connexion",
+                    details={"retry_after_seconds": retry_after},
+                )
+
+    async def record_failure(self, *, client_ip: str, email: str) -> None:
+        now = self.clock.now()
+        for key in self._keys(client_ip, email):
+            failures = self.failures.get(key, 0) + 1
+            self.failures[key] = failures
+            if failures >= self.max_attempts:
+                self.locks[key] = now + timedelta(seconds=self.lock_seconds)
+
+    async def reset(self, *, client_ip: str, email: str) -> None:
+        for key in self._keys(client_ip, email):
+            self.failures.pop(key, None)
+            self.locks.pop(key, None)
 
 
 class FakePasswordHasher:

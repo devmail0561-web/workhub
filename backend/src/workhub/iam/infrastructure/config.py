@@ -17,6 +17,9 @@ class AuthSettings(BaseSettings):
     secret_key: SecretStr = Field(min_length=32)
     access_token_ttl_seconds: int = Field(default=900, ge=60, le=3600)
     refresh_token_ttl_seconds: int = Field(default=2_592_000, ge=300, le=7_776_000)
+    login_max_attempts: int = Field(default=5, ge=2, le=100)
+    login_attempt_window_seconds: int = Field(default=900, ge=60, le=86_400)
+    login_lock_seconds: int = Field(default=900, ge=60, le=86_400)
     cookie_name: str = "workhub_refresh"
     cookie_path: str = "/api/v1/auth"
     cookie_secure: bool = False

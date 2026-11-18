@@ -25,6 +25,7 @@ from workhub.iam.infrastructure.security import (
     JwtTokenIssuer,
     OpaqueRefreshTokenFactory,
 )
+from workhub.iam.infrastructure.throttle import SqlAlchemyLoginAttemptLimiter
 from workhub.shared.api import SystemClock
 
 __all__ = [
@@ -83,6 +84,13 @@ async def get_auth_service() -> AsyncIterator[AuthService]:
         service = AuthService(
             users=SqlAlchemyUserRepository(session),
             sessions=SqlAlchemySessionRepository(session),
+            login_attempts=SqlAlchemyLoginAttemptLimiter(
+                factory,
+                SystemClock(),
+                max_attempts=settings.login_max_attempts,
+                window_seconds=settings.login_attempt_window_seconds,
+                lock_seconds=settings.login_lock_seconds,
+            ),
             password_hasher=Argon2PasswordHasher(),
             token_issuer=JwtTokenIssuer(settings.secret_key.get_secret_value()),
             refresh_tokens=OpaqueRefreshTokenFactory(),

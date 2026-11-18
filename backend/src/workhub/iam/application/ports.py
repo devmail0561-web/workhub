@@ -47,6 +47,16 @@ class SessionRepository(Protocol):
     async def revoke_by_hash(self, token_sha256: bytes, now: datetime) -> None: ...
 
 
+class LoginAttemptLimiter(Protocol):
+    """Limitation des tentatives de connexion par IP et par compte."""
+
+    async def check(self, *, client_ip: str, email: str) -> None: ...
+
+    async def record_failure(self, *, client_ip: str, email: str) -> None: ...
+
+    async def reset(self, *, client_ip: str, email: str) -> None: ...
+
+
 class PasswordHasher(Protocol):
     """Hachage et vérification des mots de passe."""
 

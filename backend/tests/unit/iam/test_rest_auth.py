@@ -7,6 +7,7 @@ import httpx
 import pytest
 from tests.unit.iam.fakes import (
     FakeClock,
+    FakeLoginAttemptLimiter,
     FakePasswordHasher,
     FakeRefreshTokenFactory,
     FakeSessionRepository,
@@ -27,13 +28,15 @@ def auth_service() -> AuthService:
     users = FakeUserRepository()
     user = make_user()
     users.users[user.id] = user
+    clock = FakeClock()
     return AuthService(
         users=users,
         sessions=FakeSessionRepository(),
+        login_attempts=FakeLoginAttemptLimiter(clock, max_attempts=3),
         password_hasher=FakePasswordHasher(),
         token_issuer=FakeTokenIssuer(),
         refresh_tokens=FakeRefreshTokenFactory(),
-        clock=FakeClock(),
+        clock=clock,
         access_token_ttl_seconds=900,
         refresh_token_ttl_seconds=3600,
     )
@@ -110,6 +113,25 @@ async def test_login_rejects_bad_credentials_and_missing_refresh(
 
     no_cookie = await client.post("/api/v1/auth/refresh")
     assert no_cookie.status_code == 401
+
+
+async def test_login_is_rate_limited_with_retry_after(client: httpx.AsyncClient) -> None:
+    for _ in range(3):
+        failed = await client.post(
+            "/api/v1/auth/login",
+            json={"email": "admin@example.test", "password": "faux"},
+        )
+        assert failed.status_code == 401
+
+    blocked = await client.post(
+        "/api/v1/auth/login",
+        json={"email": "admin@example.test", "password": "correct-horse-battery"},
+    )
+
+    assert blocked.status_code == 429
+    assert blocked.headers["retry-after"] == "60"
+    assert blocked.json()["error"]["code"] == "rate_limited"
+    assert blocked.json()["error"]["details"]["retry_after_seconds"] == 60
 
 
 async def test_me_uses_the_bearer_token(client: httpx.AsyncClient) -> None:

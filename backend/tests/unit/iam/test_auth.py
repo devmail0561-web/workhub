@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 from tests.unit.iam.fakes import (
     FakeClock,
+    FakeLoginAttemptLimiter,
     FakePasswordHasher,
     FakeRefreshTokenFactory,
     FakeSessionRepository,
@@ -13,7 +14,12 @@ from tests.unit.iam.fakes import (
 
 from workhub.iam.application.auth import AuthService
 from workhub.iam.application.bootstrap import bootstrap_admin
-from workhub.shared.api import AuthenticationError, ConflictError, ValidationError
+from workhub.shared.api import (
+    AuthenticationError,
+    ConflictError,
+    RateLimitedError,
+    ValidationError,
+)
 
 
 def build_service(
@@ -22,14 +28,17 @@ def build_service(
     sessions: FakeSessionRepository | None = None,
     clock: FakeClock | None = None,
     hasher: FakePasswordHasher | None = None,
+    max_attempts: int = 5,
 ) -> AuthService:
+    clock = clock or FakeClock()
     return AuthService(
         users=users or FakeUserRepository(),
         sessions=sessions or FakeSessionRepository(),
+        login_attempts=FakeLoginAttemptLimiter(clock, max_attempts=max_attempts),
         password_hasher=hasher or FakePasswordHasher(),
         token_issuer=FakeTokenIssuer(),
         refresh_tokens=FakeRefreshTokenFactory(),
-        clock=clock or FakeClock(),
+        clock=clock,
         access_token_ttl_seconds=900,
         refresh_token_ttl_seconds=3600,
     )
@@ -94,7 +103,7 @@ async def test_login_opens_a_session_and_updates_last_login() -> None:
     users.users[user.id] = user
     service = build_service(users=users, sessions=sessions, clock=clock)
 
-    result = await service.login("ADMIN@example.test", "correct-horse-battery")
+    result = await service.login("ADMIN@example.test", "correct-horse-battery", "203.0.113.1")
 
     assert result.user.id == user.id
     assert result.access_token.startswith("access:")
@@ -107,7 +116,7 @@ async def test_login_rejects_unknown_inactive_and_wrong_password() -> None:
     hasher = FakePasswordHasher()
     service = build_service(hasher=hasher)
     with pytest.raises(AuthenticationError):
-        await service.login("unknown@example.test", "whatever")
+        await service.login("unknown@example.test", "whatever", "203.0.113.1")
     assert hasher.dummy_checks == 1
 
     users = FakeUserRepository()
@@ -115,14 +124,14 @@ async def test_login_rejects_unknown_inactive_and_wrong_password() -> None:
     users.users[inactive.id] = inactive
     service = build_service(users=users, hasher=hasher)
     with pytest.raises(AuthenticationError):
-        await service.login(inactive.email, "correct-horse-battery")
+        await service.login(inactive.email, "correct-horse-battery", "203.0.113.1")
 
     users = FakeUserRepository()
     user = make_user()
     users.users[user.id] = user
     service = build_service(users=users, hasher=hasher)
     with pytest.raises(AuthenticationError):
-        await service.login(user.email, "wrong-password")
+        await service.login(user.email, "wrong-password", "203.0.113.1")
 
 
 async def test_refresh_rotates_the_token_and_rejects_the_old_one() -> None:
@@ -130,7 +139,7 @@ async def test_refresh_rotates_the_token_and_rejects_the_old_one() -> None:
     user = make_user()
     users.users[user.id] = user
     service = build_service(users=users)
-    login = await service.login(user.email, "correct-horse-battery")
+    login = await service.login(user.email, "correct-horse-battery", "203.0.113.1")
 
     refreshed = await service.refresh(login.refresh_token)
 
@@ -148,7 +157,7 @@ async def test_refresh_rejects_an_expired_session() -> None:
     users.users[user.id] = user
     clock = FakeClock()
     service = build_service(users=users, clock=clock)
-    login = await service.login(user.email, "correct-horse-battery")
+    login = await service.login(user.email, "correct-horse-battery", "203.0.113.1")
     clock.advance(3600)
 
     with pytest.raises(AuthenticationError):
@@ -160,7 +169,7 @@ async def test_logout_revokes_the_session_idempotently() -> None:
     user = make_user()
     users.users[user.id] = user
     service = build_service(users=users)
-    login = await service.login(user.email, "correct-horse-battery")
+    login = await service.login(user.email, "correct-horse-battery", "203.0.113.1")
 
     await service.logout(login.refresh_token)
     await service.logout(login.refresh_token)
@@ -174,7 +183,7 @@ async def test_authenticate_rejects_inactive_users() -> None:
     user = make_user()
     users.users[user.id] = user
     service = build_service(users=users)
-    login = await service.login(user.email, "correct-horse-battery")
+    login = await service.login(user.email, "correct-horse-battery", "203.0.113.1")
 
     view = await service.authenticate(login.access_token)
     assert view.id == user.id
@@ -182,3 +191,45 @@ async def test_authenticate_rejects_inactive_users() -> None:
     users.users[user.id] = make_user(email=user.email, is_active=False)
     with pytest.raises(AuthenticationError):
         await service.authenticate(login.access_token)
+
+
+async def test_login_locks_temporarily_by_account_and_ip() -> None:
+    users = FakeUserRepository()
+    user = make_user()
+    users.users[user.id] = user
+    clock = FakeClock()
+    service = build_service(users=users, clock=clock, max_attempts=3)
+
+    for _ in range(3):
+        with pytest.raises(AuthenticationError):
+            await service.login(user.email, "wrong-password", "203.0.113.1")
+
+    with pytest.raises(RateLimitedError) as blocked:
+        await service.login(user.email, "correct-horse-battery", "203.0.113.1")
+    assert blocked.value.details["retry_after_seconds"] == 60
+
+    with pytest.raises(RateLimitedError):
+        await service.login(user.email, "correct-horse-battery", "198.51.100.2")
+
+    clock.advance(60)
+    login = await service.login(user.email, "correct-horse-battery", "203.0.113.1")
+    assert login.user.id == user.id
+
+
+async def test_login_success_resets_failed_attempts() -> None:
+    users = FakeUserRepository()
+    user = make_user()
+    users.users[user.id] = user
+    service = build_service(users=users, max_attempts=3)
+    ip = "203.0.113.1"
+
+    for _ in range(2):
+        with pytest.raises(AuthenticationError):
+            await service.login(user.email, "wrong-password", ip)
+    await service.login(user.email, "correct-horse-battery", ip)
+
+    for _ in range(2):
+        with pytest.raises(AuthenticationError):
+            await service.login(user.email, "wrong-password", ip)
+    login = await service.login(user.email, "correct-horse-battery", ip)
+    assert login.user.id == user.id

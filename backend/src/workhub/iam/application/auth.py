@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from workhub.iam.application.ports import (
+    LoginAttemptLimiter,
     PasswordHasher,
     RefreshTokenFactory,
     SessionRepository,
@@ -25,6 +26,7 @@ class AuthService:
         *,
         users: UserRepository,
         sessions: SessionRepository,
+        login_attempts: LoginAttemptLimiter,
         password_hasher: PasswordHasher,
         token_issuer: TokenIssuer,
         refresh_tokens: RefreshTokenFactory,
@@ -35,6 +37,7 @@ class AuthService:
     ) -> None:
         self._users = users
         self._sessions = sessions
+        self._login_attempts = login_attempts
         self._password_hasher = password_hasher
         self._token_issuer = token_issuer
         self._refresh_tokens = refresh_tokens
@@ -51,18 +54,22 @@ class AuthService:
     def refresh_token_ttl_seconds(self) -> int:
         return self._refresh_token_ttl_seconds
 
-    async def login(self, email: str, password: str) -> AuthResult:
+    async def login(self, email: str, password: str, client_ip: str) -> AuthResult:
         """Vérifie les identifiants et ouvre une session avec rotation possible."""
         normalized = normalize_email(email)
+        await self._login_attempts.check(client_ip=client_ip, email=normalized)
         now = self._clock.now()
         user = await self._users.find_by_email(normalized)
         if user is None:
             self._password_hasher.verify_dummy(password)
+            await self._login_attempts.record_failure(client_ip=client_ip, email=normalized)
             raise AuthenticationError("Identifiants invalides")
         password_matches = self._password_hasher.verify(user.password_hash, password)
         if not user.is_active or not password_matches:
+            await self._login_attempts.record_failure(client_ip=client_ip, email=normalized)
             raise AuthenticationError("Identifiants invalides")
 
+        await self._login_attempts.reset(client_ip=client_ip, email=normalized)
         raw_refresh, refresh_hash = self._refresh_tokens.new_token()
         refresh_expires_at = now + timedelta(seconds=self._refresh_token_ttl_seconds)
         await self._users.record_login(user.id, now)

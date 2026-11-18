@@ -18,6 +18,7 @@ from workhub.iam.api import (
     get_auth_service,
     get_cookie_settings,
 )
+from workhub.interfaces.rest.errors import RATE_LIMITED_RESPONSE
 from workhub.shared.api import AuthenticationError
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
@@ -81,13 +82,15 @@ def _token_response(result: AuthResult, service: AuthService) -> JSONResponse:
     return response
 
 
-@router.post("/login", response_model=TokenResponse)
+@router.post("/login", response_model=TokenResponse, responses={429: RATE_LIMITED_RESPONSE})
 async def login(
     payload: LoginRequest,
+    request: Request,
     service: Annotated[AuthService, Depends(get_auth_service)],
 ) -> JSONResponse:
     """Vérifie les identifiants et ouvre une session."""
-    result = await service.login(payload.email, payload.password)
+    client_ip = request.client.host if request.client is not None else "unknown"
+    result = await service.login(payload.email, payload.password, client_ip)
     return _token_response(result, service)
 
 

@@ -16,13 +16,18 @@ développement : la version `0.1.0` correspond à l'amorçage, sans release publ
   `POST /api/v1/auth/login`, `POST /api/v1/auth/refresh`, `POST /api/v1/auth/logout` et
   `GET /api/v1/auth/me`, JWT d'accès court et refresh token opaque en cookie `HttpOnly` /
   `SameSite=Strict` avec rotation et révocation.
+- **Protection brute-force (E1-03)** : compteurs persistés en base (`login_attempt`, migration
+  `0005_login_attempts`) pour verrouiller temporairement une IP ou un compte après plusieurs
+  échecs, réponse `429` avec `Retry-After`, remise à zéro après une connexion réussie ;
+  `WORKHUB_LOGIN_MAX_ATTEMPTS`, `WORKHUB_LOGIN_ATTEMPT_WINDOW_SECONDS` et
+  `WORKHUB_LOGIN_LOCK_SECONDS` configurables.
 - **Durcissement base de données** : rôles `workhub_owner` (migrations) et `workhub_app`
   (runtime, sans DDL ni `TRUNCATE`), scripts `deploy/postgres/bootstrap.sh` et
   `permissions.sh`, services Compose `db-bootstrap` et `db-grants`.
 - **Migrations de durcissement** : `0002_audit_log_truncate_guard` (trigger `BEFORE TRUNCATE`
   sur `audit_log`) et `0003_fk_indexes` (21 index couvrant les FK, dont 4 composites).
-- **Contrat OpenAPI** : réponses 401/404/405/500 documentées avec `ApiErrorResponse` et client
-  TypeScript régénéré.
+- **Contrat OpenAPI** : réponses 401/404/405/500 documentées avec `ApiErrorResponse`, `429`
+  sur la connexion verrouillée, et client TypeScript régénéré.
 - **Squelette frontend (E0-11)** : Vite 8 + React 19 + TypeScript strict, Tailwind 4,
   shadcn/ui, TanStack Router/Query, client OpenAPI généré (`openapi-typescript` +
   `openapi-fetch`) ; page `/` appelant `/api/v1/health`, proxy même origine (Vite/Nginx),

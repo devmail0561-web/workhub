@@ -51,6 +51,11 @@ ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     500: {"model": ApiErrorResponse, "description": "Erreur interne"},
 }
 
+RATE_LIMITED_RESPONSE: dict[str, Any] = {
+    "model": ApiErrorResponse,
+    "description": "Trop de tentatives",
+}
+
 
 _STATUS_BY_ERROR: tuple[tuple[type[WorkHubError], int], ...] = (
     (ValidationError, 422),
@@ -145,6 +150,10 @@ def install_error_handlers(app: FastAPI) -> None:
         headers = _headers(request_id)
         if isinstance(exc, AuthenticationError):
             headers["WWW-Authenticate"] = "Bearer"
+        if isinstance(exc, RateLimitedError):
+            retry_after = exc.details.get("retry_after_seconds")
+            if isinstance(retry_after, int):
+                headers["Retry-After"] = str(retry_after)
         return _json_response(status, body, headers=headers)
 
     @app.exception_handler(StarletteHTTPException)

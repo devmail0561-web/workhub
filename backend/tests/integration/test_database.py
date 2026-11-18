@@ -38,11 +38,19 @@ FK_INDEXES = {
 async def test_migration_is_applied(session: AsyncSession) -> None:
     version = (await session.execute(text("select version_num from alembic_version"))).scalar_one()
 
-    assert version == "0004_auth_sessions"
+    assert version == "0005_login_attempts"
 
 
 async def test_key_tables_exist(session: AsyncSession) -> None:
-    for name in ("skill", "blob", "audit_log", "work_plan_instance", "proposal", "session"):
+    for name in (
+        "skill",
+        "blob",
+        "audit_log",
+        "work_plan_instance",
+        "proposal",
+        "session",
+        "login_attempt",
+    ):
         found = (
             await session.execute(text("select to_regclass(:name)"), {"name": f"public.{name}"})
         ).scalar_one()
