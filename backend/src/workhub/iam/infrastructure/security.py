@@ -14,6 +14,7 @@ from argon2 import PasswordHasher as Argon2
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 
 from workhub.iam.application.ports import AccessToken
+from workhub.iam.domain.api_token import API_TOKEN_PREFIX
 from workhub.shared.api import AuthenticationError
 
 _ACCESS_TOKEN_TYPE = "access"
@@ -116,3 +117,17 @@ class OpaqueRefreshTokenFactory:
 
     def hash_token(self, token: str) -> bytes:
         return hashlib.sha256(token.encode("utf-8")).digest()
+
+
+class OpaqueApiTokenFactory:
+    """Génère un jeton d'intégration préfixé et son empreinte SHA-256."""
+
+    def new_token(self) -> tuple[str, bytes]:
+        token = API_TOKEN_PREFIX + secrets.token_urlsafe(32)
+        return token, self.hash_token(token)
+
+    def hash_token(self, token: str) -> bytes:
+        return hashlib.sha256(token.encode("utf-8")).digest()
+
+    def is_api_token(self, token: str) -> bool:
+        return token.startswith(API_TOKEN_PREFIX)

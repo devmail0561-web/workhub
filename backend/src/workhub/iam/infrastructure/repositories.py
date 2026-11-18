@@ -5,11 +5,25 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, LargeBinary, Text, Uuid, func, select, update
+from sqlalchemy import (
+    ARRAY,
+    DateTime,
+    ForeignKey,
+    LargeBinary,
+    Text,
+    Uuid,
+    func,
+    or_,
+    select,
+    update,
+)
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
+from workhub.iam.application.integration_ports import TokenIdentity
+from workhub.iam.domain.api_token import ApiToken
+from workhub.iam.domain.integration import Integration, IntegrationKind
 from workhub.iam.domain.session import Session
 from workhub.iam.domain.user import User
 from workhub.iam.infrastructure.database import Base
@@ -50,6 +64,42 @@ class SessionRow(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class IntegrationRow(Base):
+    """Ligne de la table `integration`."""
+
+    __tablename__ = "integration"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    owner_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("app_user.id"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ApiTokenRow(Base):
+    """Ligne de la table `api_token`."""
+
+    __tablename__ = "api_token"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    integration_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("integration.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    token_sha256: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    scopes: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 def _to_user(row: AppUserRow) -> User:
     return User(
         id=row.id,
@@ -61,6 +111,30 @@ def _to_user(row: AppUserRow) -> User:
         created_at=row.created_at,
         updated_at=row.updated_at,
         last_login_at=row.last_login_at,
+    )
+
+
+def _to_integration(row: IntegrationRow) -> Integration:
+    return Integration(
+        id=row.id,
+        name=row.name,
+        kind=IntegrationKind(row.kind),
+        owner_id=row.owner_id,
+        created_at=row.created_at,
+        revoked_at=row.revoked_at,
+    )
+
+
+def _to_api_token(row: ApiTokenRow) -> ApiToken:
+    return ApiToken(
+        id=row.id,
+        integration_id=row.integration_id,
+        token_sha256=row.token_sha256,
+        scopes=frozenset(row.scopes),
+        created_at=row.created_at,
+        expires_at=row.expires_at,
+        last_used_at=row.last_used_at,
+        revoked_at=row.revoked_at,
     )
 
 
@@ -160,4 +234,113 @@ class SqlAlchemySessionRepository:
                 SessionRow.revoked_at.is_(None),
             )
             .values(revoked_at=now)
+        )
+
+
+class SqlAlchemyIntegrationRepository:
+    """Implémentation PostgreSQL du port intégration."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def add(self, integration: Integration) -> None:
+        self._session.add(
+            IntegrationRow(
+                id=integration.id,
+                name=integration.name,
+                kind=integration.kind.value,
+                owner_id=integration.owner_id,
+                created_at=integration.created_at,
+                revoked_at=integration.revoked_at,
+            )
+        )
+        await self._session.flush()
+
+    async def find_by_id(self, integration_id: UUID) -> Integration | None:
+        row = await self._session.get(IntegrationRow, integration_id)
+        return None if row is None else _to_integration(row)
+
+    async def list_for_owner(self, owner_id: UUID) -> list[Integration]:
+        rows = (
+            await self._session.execute(
+                select(IntegrationRow)
+                .where(IntegrationRow.owner_id == owner_id)
+                .order_by(IntegrationRow.created_at.desc())
+            )
+        ).scalars()
+        return [_to_integration(row) for row in rows]
+
+    async def revoke(self, integration_id: UUID, at: datetime) -> None:
+        await self._session.execute(
+            update(IntegrationRow).where(IntegrationRow.id == integration_id).values(revoked_at=at)
+        )
+
+
+class SqlAlchemyApiTokenRepository:
+    """Implémentation PostgreSQL du port jeton d'intégration."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def add(self, token: ApiToken) -> None:
+        self._session.add(
+            ApiTokenRow(
+                id=token.id,
+                integration_id=token.integration_id,
+                token_sha256=token.token_sha256,
+                scopes=sorted(token.scopes),
+                created_at=token.created_at,
+                expires_at=token.expires_at,
+                last_used_at=token.last_used_at,
+                revoked_at=token.revoked_at,
+            )
+        )
+        await self._session.flush()
+
+    async def find_by_id(self, token_id: UUID) -> ApiToken | None:
+        row = await self._session.get(ApiTokenRow, token_id)
+        return None if row is None else _to_api_token(row)
+
+    async def find_active_by_hash(
+        self,
+        token_sha256: bytes,
+        now: datetime,
+    ) -> TokenIdentity | None:
+        result = await self._session.execute(
+            select(ApiTokenRow, IntegrationRow)
+            .join(IntegrationRow, ApiTokenRow.integration_id == IntegrationRow.id)
+            .where(
+                ApiTokenRow.token_sha256 == token_sha256,
+                ApiTokenRow.revoked_at.is_(None),
+                IntegrationRow.revoked_at.is_(None),
+                or_(ApiTokenRow.expires_at.is_(None), ApiTokenRow.expires_at > now),
+            )
+        )
+        row = result.one_or_none()
+        if row is None:
+            return None
+        token_row, integration_row = row
+        return TokenIdentity(
+            token=_to_api_token(token_row),
+            integration=_to_integration(integration_row),
+        )
+
+    async def revoke(self, token_id: UUID, at: datetime) -> None:
+        await self._session.execute(
+            update(ApiTokenRow).where(ApiTokenRow.id == token_id).values(revoked_at=at)
+        )
+
+    async def revoke_for_integration(self, integration_id: UUID, at: datetime) -> None:
+        await self._session.execute(
+            update(ApiTokenRow)
+            .where(
+                ApiTokenRow.integration_id == integration_id,
+                ApiTokenRow.revoked_at.is_(None),
+            )
+            .values(revoked_at=at)
+        )
+
+    async def touch_last_used(self, token_id: UUID, at: datetime) -> None:
+        await self._session.execute(
+            update(ApiTokenRow).where(ApiTokenRow.id == token_id).values(last_used_at=at)
         )

@@ -138,6 +138,8 @@ forbidden_modules = ["workhub.*.domain", "workhub.*.infrastructure"]
 ignore_imports = [
     "workhub.shared.api -> workhub.shared.domain.*",
     "workhub.interfaces.rest.auth -> workhub.iam.api",
+    "workhub.interfaces.rest.dependencies -> workhub.iam.api",
+    "workhub.interfaces.rest.integrations -> workhub.iam.api",
 ]
 
 [[tool.importlinter.contracts]]

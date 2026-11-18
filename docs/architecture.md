@@ -96,8 +96,9 @@ Précisions d'implémentation :
 - **SQLAlchemy 2** en mode asynchrone, pilote **psycopg 3** (`postgresql+psycopg`).
 - **Alembic** dans `backend/migrations/` ; migration initiale `0001_schema_v0` issue du
   [schéma v0](specs/schema-v0.md), puis `0002_audit_log_truncate_guard`,
-  `0003_fk_indexes`, `0004_auth_sessions` (`app_user.is_admin`, table `session`) et
-  `0005_login_attempts` (compteurs de tentatives de connexion). Le DDL de référence reste
+  `0003_fk_indexes`, `0004_auth_sessions` (`app_user.is_admin`, table `session`),
+  `0005_login_attempts` (compteurs de tentatives de connexion) et `0006_integrations`
+  (garde-fous des intégrations et de leurs jetons). Le DDL de référence reste
   documenté, une copie vendue est utilisée par la migration et un test empêche la dérive.
 - **Séparation des rôles PostgreSQL** : `workhub_owner` possède la base, le schéma et les
   objets et applique les migrations ; `workhub_app` n'a que le DML runtime, sans DDL ni

@@ -258,7 +258,7 @@ Résultat : 29 tables, 16 triggers, DDL appliqué sans erreur, 12 scénarios d'i
 (blob, audit, versions, fichiers, FK composite d'épinglage, gel d'instance, plan publié,
 proposition, instantané, auto-dépendance, GC explicite).
 
-Le schéma appliqué par Alembic ajoute quatre évolutions sans modifier le DDL v0 de référence :
+Le schéma appliqué par Alembic ajoute cinq évolutions sans modifier le DDL v0 de référence :
 
 - **`0002_audit_log_truncate_guard`** : trigger `BEFORE TRUNCATE` sur `audit_log`, car les
   triggers ligne par ligne ne couvrent pas `TRUNCATE` ;
@@ -266,10 +266,12 @@ Le schéma appliqué par Alembic ajoute quatre évolutions sans modifier le DDL 
 - **`0004_auth_sessions`** : colonne `app_user.is_admin` et table `session` (refresh tokens
   hachés, rotation, révocation), avec index sur l'utilisateur, l'expiration et le hash ;
 - **`0005_login_attempts`** : table `login_attempt` (compteurs de tentatives par hash d'IP ou
-  de compte, fenêtre glissante et verrou temporaire).
+  de compte, fenêtre glissante et verrou temporaire) ;
+- **`0006_integrations`** : garde-fous `ck_integration_kind` et
+  `ck_api_token_expiration` sur les tables existantes `integration` et `api_token`.
 
 État effectif après `alembic upgrade head` : **31 tables métier** (32 avec `alembic_version`),
-**17 triggers**, **43 FK**, **66 CHECK** portés par des tables (68 contraintes `CHECK` au total
+**17 triggers**, **43 FK**, **68 CHECK** portés par des tables (70 contraintes `CHECK` au total
 avec les deux contraintes de domaine) et **85 index** hors `alembic_version`.
 
 ## Limites connues

@@ -2,14 +2,24 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
+from workhub.iam.application.integration_ports import TokenIdentity
 from workhub.iam.application.ports import AccessToken
+from workhub.iam.domain.api_token import ApiToken
+from workhub.iam.domain.integration import Integration, IntegrationKind
 from workhub.iam.domain.session import Session
 from workhub.iam.domain.user import User
-from workhub.shared.api import AuthenticationError, RateLimitedError
+from workhub.shared.api import (
+    AuthenticationError,
+    Principal,
+    PrincipalType,
+    RateLimitedError,
+)
 
 
 class FakeClock:
@@ -194,3 +204,128 @@ def make_user(
         created_at=now,
         updated_at=now,
     )
+
+
+class FakeApiTokenFactory:
+    def __init__(self) -> None:
+        self.counter = 0
+
+    def new_token(self) -> tuple[str, bytes]:
+        self.counter += 1
+        token = f"whub_token-{self.counter}"
+        return token, self.hash_token(token)
+
+    def hash_token(self, token: str) -> bytes:
+        return hashlib.sha256(token.encode("utf-8")).digest()
+
+    def is_api_token(self, token: str) -> bool:
+        return token.startswith("whub_")
+
+
+class FakeIntegrationRepository:
+    def __init__(self) -> None:
+        self.integrations: dict[UUID, Integration] = {}
+
+    async def add(self, integration: Integration) -> None:
+        self.integrations[integration.id] = integration
+
+    async def find_by_id(self, integration_id: UUID) -> Integration | None:
+        return self.integrations.get(integration_id)
+
+    async def list_for_owner(self, owner_id: UUID) -> list[Integration]:
+        return sorted(
+            (item for item in self.integrations.values() if item.owner_id == owner_id),
+            key=lambda item: item.created_at,
+            reverse=True,
+        )
+
+    async def revoke(self, integration_id: UUID, at: datetime) -> None:
+        integration = self.integrations.get(integration_id)
+        if integration is not None:
+            self.integrations[integration_id] = integration.revoke(at)
+
+
+class FakeApiTokenRepository:
+    def __init__(self, integrations: FakeIntegrationRepository | None = None) -> None:
+        self.tokens: dict[UUID, ApiToken] = {}
+        self.integrations = integrations or FakeIntegrationRepository()
+
+    async def add(self, token: ApiToken) -> None:
+        self.tokens[token.id] = token
+
+    async def find_by_id(self, token_id: UUID) -> ApiToken | None:
+        return self.tokens.get(token_id)
+
+    async def find_active_by_hash(
+        self,
+        token_sha256: bytes,
+        now: datetime,
+    ) -> TokenIdentity | None:
+        for token in self.tokens.values():
+            integration = self.integrations.integrations.get(token.integration_id)
+            if (
+                token.token_sha256 == token_sha256
+                and token.is_active(now)
+                and integration is not None
+                and integration.is_active
+            ):
+                return TokenIdentity(token=token, integration=integration)
+        return None
+
+    async def revoke(self, token_id: UUID, at: datetime) -> None:
+        token = self.tokens.get(token_id)
+        if token is not None:
+            self.tokens[token_id] = token.revoke(at)
+
+    async def revoke_for_integration(self, integration_id: UUID, at: datetime) -> None:
+        for token_id, token in list(self.tokens.items()):
+            if token.integration_id == integration_id:
+                self.tokens[token_id] = token.revoke(at)
+
+    async def touch_last_used(self, token_id: UUID, at: datetime) -> None:
+        token = self.tokens.get(token_id)
+        if token is not None:
+            self.tokens[token_id] = replace(token, last_used_at=at)
+
+
+def make_integration(
+    *,
+    owner_id: UUID,
+    name: str = "OpenCode",
+    clock: FakeClock | None = None,
+) -> Integration:
+    now = (clock or FakeClock()).now()
+    return Integration(
+        id=uuid4(),
+        name=name,
+        kind=IntegrationKind.OPENCODE,
+        owner_id=owner_id,
+        created_at=now,
+    )
+
+
+def make_principal(
+    *,
+    is_admin: bool = True,
+    scopes: frozenset[str] | None = None,
+    display_name: str = "Admin",
+) -> Principal:
+    if scopes is None:
+        scopes = frozenset({"*"}) if is_admin else frozenset()
+    return Principal(
+        id=uuid4(),
+        type=PrincipalType.USER,
+        display_name=display_name,
+        scopes=scopes,
+    )
+
+
+class FakePrincipalResolver:
+    def __init__(self, principal: Principal, *, token: str = "access") -> None:
+        self.principal = principal
+        self.token = token
+
+    async def resolve(self, credential: str) -> Principal:
+        if credential != self.token:
+            raise AuthenticationError("Jeton invalide ou expiré")
+        return self.principal

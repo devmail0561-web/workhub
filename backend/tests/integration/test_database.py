@@ -38,7 +38,7 @@ FK_INDEXES = {
 async def test_migration_is_applied(session: AsyncSession) -> None:
     version = (await session.execute(text("select version_num from alembic_version"))).scalar_one()
 
-    assert version == "0005_login_attempts"
+    assert version == "0006_integrations"
 
 
 async def test_key_tables_exist(session: AsyncSession) -> None:
@@ -50,6 +50,8 @@ async def test_key_tables_exist(session: AsyncSession) -> None:
         "proposal",
         "session",
         "login_attempt",
+        "integration",
+        "api_token",
     ):
         found = (
             await session.execute(text("select to_regclass(:name)"), {"name": f"public.{name}"})

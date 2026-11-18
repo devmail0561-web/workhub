@@ -158,3 +158,28 @@ async def test_me_uses_the_bearer_token(client: httpx.AsyncClient) -> None:
         headers={"Authorization": "Bearer invalide"},
     )
     assert forged.status_code == 401
+
+
+async def test_principal_returns_scopes_for_the_resolved_identity(
+    client: httpx.AsyncClient,
+) -> None:
+    from tests.unit.iam.fakes import make_principal
+
+    from workhub.interfaces.rest.dependencies import current_principal
+
+    principal = make_principal(is_admin=False, scopes=frozenset({"skills:read", "tools:read"}))
+    app.dependency_overrides[current_principal] = lambda: principal
+
+    response = await client.get(
+        "/api/v1/auth/principal",
+        headers={"Authorization": "Bearer access"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json() == {
+        "id": str(principal.id),
+        "type": "user",
+        "display_name": "Admin",
+        "scopes": ["skills:read", "tools:read"],
+    }

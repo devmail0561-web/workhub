@@ -12,21 +12,32 @@ from functools import lru_cache
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from workhub.iam.application.auth import AuthService
+from workhub.iam.application.integrations import IntegrationService
 from workhub.iam.application.ports import AccessToken
-from workhub.iam.application.views import AuthResult, UserView
+from workhub.iam.application.principal import PrincipalResolver
+from workhub.iam.application.views import (
+    AuthResult,
+    CreatedIntegrationView,
+    IntegrationView,
+    IssuedApiTokenView,
+    UserView,
+)
 from workhub.iam.infrastructure.config import AuthSettings, get_auth_settings
 from workhub.iam.infrastructure.database import create_engine, create_session_factory
 from workhub.iam.infrastructure.repositories import (
+    SqlAlchemyApiTokenRepository,
+    SqlAlchemyIntegrationRepository,
     SqlAlchemySessionRepository,
     SqlAlchemyUserRepository,
 )
 from workhub.iam.infrastructure.security import (
     Argon2PasswordHasher,
     JwtTokenIssuer,
+    OpaqueApiTokenFactory,
     OpaqueRefreshTokenFactory,
 )
 from workhub.iam.infrastructure.throttle import SqlAlchemyLoginAttemptLimiter
-from workhub.shared.api import SystemClock
+from workhub.shared.api import Principal, SystemClock
 
 __all__ = [
     "AccessToken",
@@ -34,9 +45,17 @@ __all__ = [
     "AuthService",
     "AuthSettings",
     "CookieSettings",
+    "CreatedIntegrationView",
+    "IntegrationService",
+    "IntegrationView",
+    "IssuedApiTokenView",
+    "Principal",
+    "PrincipalResolver",
     "UserView",
     "get_auth_service",
     "get_cookie_settings",
+    "get_integration_service",
+    "get_principal_resolver",
     "get_session_factory",
 ]
 
@@ -100,6 +119,46 @@ async def get_auth_service() -> AsyncIterator[AuthService]:
         )
         try:
             yield service
+        except Exception:
+            await session.rollback()
+            raise
+        else:
+            await session.commit()
+
+
+async def get_integration_service() -> AsyncIterator[IntegrationService]:
+    """Compose le service d'intégration et gère la transaction de la requête."""
+    factory = get_session_factory()
+    async with factory() as session:
+        service = IntegrationService(
+            integrations=SqlAlchemyIntegrationRepository(session),
+            tokens=SqlAlchemyApiTokenRepository(session),
+            token_factory=OpaqueApiTokenFactory(),
+            clock=SystemClock(),
+        )
+        try:
+            yield service
+        except Exception:
+            await session.rollback()
+            raise
+        else:
+            await session.commit()
+
+
+async def get_principal_resolver() -> AsyncIterator[PrincipalResolver]:
+    """Compose la résolution d'identité et gère la transaction de la requête."""
+    settings = get_auth_settings()
+    factory = get_session_factory()
+    async with factory() as session:
+        resolver = PrincipalResolver(
+            users=SqlAlchemyUserRepository(session),
+            tokens=SqlAlchemyApiTokenRepository(session),
+            token_issuer=JwtTokenIssuer(settings.secret_key.get_secret_value()),
+            token_factory=OpaqueApiTokenFactory(),
+            clock=SystemClock(),
+        )
+        try:
+            yield resolver
         except Exception:
             await session.rollback()
             raise

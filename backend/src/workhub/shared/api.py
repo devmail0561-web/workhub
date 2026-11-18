@@ -3,6 +3,7 @@
 Seul point d'entrée autorisé pour les autres modules (règles d'architecture 3, 6 et 7).
 """
 
+from workhub.shared.domain.authorization import require_scope
 from workhub.shared.domain.clock import Clock, SystemClock
 from workhub.shared.domain.errors import (
     AuthenticationError,
@@ -36,4 +37,5 @@ __all__ = [
     "WorkHubError",
     "new_id",
     "paginate",
+    "require_scope",
 ]

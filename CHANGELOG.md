@@ -21,6 +21,14 @@ développement : la version `0.1.0` correspond à l'amorçage, sans release publ
   échecs, réponse `429` avec `Retry-After`, remise à zéro après une connexion réussie ;
   `WORKHUB_LOGIN_MAX_ATTEMPTS`, `WORKHUB_LOGIN_ATTEMPT_WINDOW_SECONDS` et
   `WORKHUB_LOGIN_LOCK_SECONDS` configurables.
+- **Intégrations et jetons opaques (E1-04)** : `Integration`, `ApiToken` haché en SHA-256,
+  scopes `ressource:action`, expiration optionnelle, révocation en cascade, routes
+  `POST/GET /api/v1/integrations`, `DELETE /api/v1/integrations/{id}` et
+  `/api/v1/integrations/{id}/tokens` ; le jeton brut préfixé `whub_` n'est affiché qu'une fois.
+  Migration `0006_integrations` pour les garde-fous de type et d'expiration.
+- **Résolution unifiée du `Principal` (E1-05)** : `/api/v1/auth/principal` accepte un JWT de
+  session ou un jeton d'intégration, décorateur `require_scope` côté application, scope `*`
+  temporaire pour l'administrateur et refus des scopes de gestion pour les intégrations.
 - **Durcissement base de données** : rôles `workhub_owner` (migrations) et `workhub_app`
   (runtime, sans DDL ni `TRUNCATE`), scripts `deploy/postgres/bootstrap.sh` et
   `permissions.sh`, services Compose `db-bootstrap` et `db-grants`.

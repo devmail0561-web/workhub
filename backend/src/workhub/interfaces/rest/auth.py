@@ -14,10 +14,12 @@ from pydantic import BaseModel, Field
 from workhub.iam.api import (
     AuthResult,
     AuthService,
+    Principal,
     UserView,
     get_auth_service,
     get_cookie_settings,
 )
+from workhub.interfaces.rest.dependencies import current_principal
 from workhub.interfaces.rest.errors import RATE_LIMITED_RESPONSE
 from workhub.shared.api import AuthenticationError
 
@@ -59,6 +61,24 @@ class TokenResponse(BaseModel):
     token_type: Literal["bearer"] = "bearer"
     expires_in: int
     user: UserResponse
+
+
+class PrincipalResponse(BaseModel):
+    """Identité résolue et permissions effectives."""
+
+    id: UUID
+    type: Literal["user", "integration", "system"]
+    display_name: str
+    scopes: list[str]
+
+    @classmethod
+    def from_principal(cls, principal: Principal) -> PrincipalResponse:
+        return cls(
+            id=principal.id,
+            type=principal.type.value,
+            display_name=principal.display_name or "",
+            scopes=sorted(principal.scopes),
+        )
 
 
 def _token_response(result: AuthResult, service: AuthService) -> JSONResponse:
@@ -127,6 +147,17 @@ async def logout(
         httponly=True,
         samesite="strict",
     )
+    return response
+
+
+@router.get("/principal", response_model=PrincipalResponse)
+async def principal(
+    resolved: Annotated[Principal, Depends(current_principal)],
+) -> JSONResponse:
+    """Retourne l'identité et les scopes du JWT ou du jeton d'intégration."""
+    body = PrincipalResponse.from_principal(resolved)
+    response = JSONResponse(content=body.model_dump(mode="json"))
+    response.headers["Cache-Control"] = "no-store"
     return response
 
 

@@ -12,7 +12,7 @@ values ('00000000-0000-0000-0000-000000000001', 'admin@example.test', 'x', 'Admi
 
 insert into integration (id, name, kind, owner_id)
 values (
-    '00000000-0000-0000-0000-000000000002', 'agent-test', 'agent',
+    '00000000-0000-0000-0000-000000000002', 'agent-test', 'opencode',
     '00000000-0000-0000-0000-000000000001'
 );
 

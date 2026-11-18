@@ -46,6 +46,7 @@ class ApiErrorResponse(BaseModel):
 
 ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     401: {"model": ApiErrorResponse, "description": "Authentification requise"},
+    403: {"model": ApiErrorResponse, "description": "Accès refusé"},
     404: {"model": ApiErrorResponse, "description": "Ressource introuvable"},
     405: {"model": ApiErrorResponse, "description": "Méthode non autorisée"},
     500: {"model": ApiErrorResponse, "description": "Erreur interne"},
