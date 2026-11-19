@@ -36,7 +36,7 @@ async def bootstrap_admin(
     user = User(
         id=id_factory(),
         email=normalized_email,
-        password_hash=password_hasher.hash(password),
+        password_hash=await password_hasher.hash(password),
         display_name=normalized_name,
         is_active=True,
         is_admin=True,

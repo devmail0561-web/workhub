@@ -111,14 +111,18 @@ class SqlAlchemyLoginAttemptLimiter:
     async def reset(self, *, client_ip: str, email: str) -> None:
         async with self._session_factory() as session:
             await session.execute(
-                delete(LoginAttemptRow).where(
-                    LoginAttemptRow.key_hash.in_(self._keys(client_ip, email))
-                )
+                delete(LoginAttemptRow).where(LoginAttemptRow.key_hash == self._account_key(email))
             )
             await session.commit()
 
     @staticmethod
-    def _keys(client_ip: str, email: str) -> tuple[bytes, bytes]:
-        ip_key = hashlib.sha256(b"ip\0" + client_ip.encode("utf-8")).digest()
-        account_key = hashlib.sha256(b"account\0" + email.encode("utf-8")).digest()
-        return ip_key, account_key
+    def _ip_key(client_ip: str) -> bytes:
+        return hashlib.sha256(b"ip\0" + client_ip.encode("utf-8")).digest()
+
+    @classmethod
+    def _account_key(cls, email: str) -> bytes:
+        return hashlib.sha256(b"account\0" + email.encode("utf-8")).digest()
+
+    @classmethod
+    def _keys(cls, client_ip: str, email: str) -> tuple[bytes, bytes]:
+        return cls._ip_key(client_ip), cls._account_key(email)

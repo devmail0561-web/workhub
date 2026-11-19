@@ -16,15 +16,15 @@ from workhub.shared.api import AuthenticationError
 SECRET = "test-secret-key-0123456789abcdef"
 
 
-def test_argon2id_hash_and_verify() -> None:
+async def test_argon2id_hash_and_verify() -> None:
     hasher = Argon2PasswordHasher()
-    hashed = hasher.hash("correct-horse-battery")
+    hashed = await hasher.hash("correct-horse-battery")
 
     assert hashed.startswith("$argon2id$")
-    assert hasher.verify(hashed, "correct-horse-battery") is True
-    assert hasher.verify(hashed, "mauvais") is False
-    assert hasher.verify("pas-un-hash", "correct-horse-battery") is False
-    hasher.verify_dummy("n-importe-quoi")
+    assert await hasher.verify(hashed, "correct-horse-battery") is True
+    assert await hasher.verify(hashed, "mauvais") is False
+    assert await hasher.verify("pas-un-hash", "correct-horse-battery") is False
+    await hasher.verify_dummy("n-importe-quoi")
 
 
 def test_jwt_access_token_roundtrip_and_expiration() -> None:

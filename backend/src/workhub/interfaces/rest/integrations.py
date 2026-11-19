@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, Request, Response, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -19,6 +19,7 @@ from workhub.iam.api import (
     get_integration_service,
 )
 from workhub.interfaces.rest.dependencies import current_principal
+from workhub.interfaces.rest.middleware import get_request_id
 
 router = APIRouter(prefix="/api/v1/integrations", tags=["integrations"])
 
@@ -106,6 +107,7 @@ def _no_store(response: Response) -> None:
 )
 async def create_integration(
     payload: CreateIntegrationRequest,
+    request: Request,
     principal: Annotated[Principal, Depends(current_principal)],
     service: Annotated[IntegrationService, Depends(get_integration_service)],
 ) -> JSONResponse:
@@ -116,6 +118,7 @@ async def create_integration(
         kind=payload.kind,
         scopes=payload.scopes,
         expires_at=payload.expires_at,
+        request_id=get_request_id(request),
     )
     body = CreatedIntegrationResponse.from_view(created)
     return JSONResponse(
@@ -137,11 +140,12 @@ async def list_integrations(
 @router.delete("/{integration_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def revoke_integration(
     integration_id: UUID,
+    request: Request,
     principal: Annotated[Principal, Depends(current_principal)],
     service: Annotated[IntegrationService, Depends(get_integration_service)],
 ) -> Response:
     """Révoque l'intégration et tous ses jetons."""
-    await service.revoke(principal, integration_id)
+    await service.revoke(principal, integration_id, request_id=get_request_id(request))
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -153,6 +157,7 @@ async def revoke_integration(
 async def create_token(
     integration_id: UUID,
     payload: CreateTokenRequest,
+    request: Request,
     principal: Annotated[Principal, Depends(current_principal)],
     service: Annotated[IntegrationService, Depends(get_integration_service)],
     response: Response,
@@ -163,6 +168,7 @@ async def create_token(
         integration_id,
         scopes=payload.scopes,
         expires_at=payload.expires_at,
+        request_id=get_request_id(request),
     )
     _no_store(response)
     return IssuedTokenResponse.from_view(issued)
@@ -175,9 +181,15 @@ async def create_token(
 async def revoke_token(
     integration_id: UUID,
     token_id: UUID,
+    request: Request,
     principal: Annotated[Principal, Depends(current_principal)],
     service: Annotated[IntegrationService, Depends(get_integration_service)],
 ) -> Response:
     """Révoque un jeton précis."""
-    await service.revoke_token(principal, integration_id, token_id)
+    await service.revoke_token(
+        principal,
+        integration_id,
+        token_id,
+        request_id=get_request_id(request),
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

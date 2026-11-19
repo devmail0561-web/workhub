@@ -51,6 +51,7 @@ def _service(
         clock=clock or SystemClock(),
         access_token_ttl_seconds=900,
         refresh_token_ttl_seconds=3600,
+        commit=session.commit,
     )
 
 

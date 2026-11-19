@@ -44,6 +44,7 @@ pnpm run dev
 
 # Stack locale (API, web construite, Postgres)
 cp deploy/.env.example deploy/.env
+# Renseigner des secrets générés (openssl rand -hex 32) dans deploy/.env.
 docker compose -f deploy/docker-compose.yml up -d --build
 docker compose -f deploy/docker-compose.yml exec \
   -e WORKHUB_BOOTSTRAP_PASSWORD='<mot-de-passe>' \

@@ -309,10 +309,12 @@ class SqlAlchemyApiTokenRepository:
         result = await self._session.execute(
             select(ApiTokenRow, IntegrationRow)
             .join(IntegrationRow, ApiTokenRow.integration_id == IntegrationRow.id)
+            .join(AppUserRow, IntegrationRow.owner_id == AppUserRow.id)
             .where(
                 ApiTokenRow.token_sha256 == token_sha256,
                 ApiTokenRow.revoked_at.is_(None),
                 IntegrationRow.revoked_at.is_(None),
+                AppUserRow.is_active.is_(True),
                 or_(ApiTokenRow.expires_at.is_(None), ApiTokenRow.expires_at > now),
             )
         )

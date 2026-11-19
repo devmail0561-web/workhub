@@ -6,9 +6,9 @@
 |---|---|
 | Epic | `E1` |
 | Jalon | `M0 → M2` |
-| Tâches couvertes | `E1-01`, `E1-02`, `E1-03`, `E1-04`, `E1-05` |
-| Statut | E1-01 à E1-05 terminés ; E1-06 → E1-07 à venir |
-| Dernière mise à jour | 2026-11-18 |
+| Tâches couvertes | `E1-01`, `E1-02`, `E1-03`, `E1-04`, `E1-05`, `E1-08` |
+| Statut | E1-01 à E1-05 et E1-08 terminés ; E1-06 → E1-07 à venir |
+| Dernière mise à jour | 2026-11-19 |
 | ADR liées | [004 — Identité](../adr/004-identite-principal.md) |
 
 ## Objectif
@@ -28,6 +28,7 @@ opaques portant des scopes explicites. Toutes ces identités convergent vers le 
 | `E1-04` | Entités `Integration`, `ApiToken` (haché), scopes, expiration, révocation | fait | Création, affichage unique du jeton, expiration, révocation et isolation par propriétaire testés |
 | `E1-05` | Résolution du `Principal` (session ou jeton) et décorateur d'autorisation | fait | `/auth/principal` résout les deux types ; le décorateur refuse un scope absent |
 | `E1-06` → `E1-07` | Restriction par projet, matrice de permissions | à faire | — |
+| `E1-08` | Journal d'audit append-only et écriture des actions d'intégration | fait | Créations/révocations d'intégrations et de jetons auditées avec `request_id`, sans secret |
 
 ## Ce qui a été implémenté
 
@@ -53,10 +54,13 @@ opaques portant des scopes explicites. Toutes ces identités convergent vers le 
 - `backend/src/workhub/iam/application/integration_ports.py` : ports `IntegrationRepository`,
   `ApiTokenRepository`, `ApiTokenFactory` et projection `TokenIdentity`.
 - `backend/src/workhub/iam/application/integrations.py` : création, liste, révocation des
-  intégrations, émission et révocation des jetons, isolation par propriétaire.
+  intégrations, émission et révocation des jetons, isolation par propriétaire ; les écritures
+  sont auditées et committées avant le retour.
 - `backend/src/workhub/iam/application/principal.py` : `PrincipalResolver` qui accepte un JWT
-  d'access ou un jeton `whub_…`, vérifie l'état du compte, du jeton et de l'intégration, puis
-  met à jour `last_used_at`.
+  d'access ou un jeton `whub_…`, vérifie l'état du compte, du jeton, de l'intégration et du
+  propriétaire, puis met à jour `last_used_at` avant commit.
+- `backend/src/workhub/audit/` : entrée `AuditEntry`, port `AuditRecorder`, écrivain
+  PostgreSQL `SqlAlchemyAuditRecorder` et API publique du module.
 - `backend/src/workhub/iam/application/views.py` : `UserView`, `AuthResult`,
   `IntegrationView`, `IssuedApiTokenView`, `CreatedIntegrationView` et conversion
   `UserView.to_principal()`, sans hash ni donnée interne.
@@ -66,9 +70,9 @@ opaques portant des scopes explicites. Toutes ces identités convergent vers le 
 ### Infrastructure
 
 - `backend/src/workhub/iam/infrastructure/security.py` : argon2id
-  (`time_cost=3`, `memory_cost=65536`, `parallelism=4`), JWT HS256, refresh token opaque de
-  48 octets aléatoires haché en SHA-256 et `OpaqueApiTokenFactory` qui génère des jetons
-  `whub_` puis ne stocke que leur hash SHA-256.
+  (`time_cost=3`, `memory_cost=65536`, `parallelism=4`) exécuté hors boucle avec un sémaphore,
+  JWT HS256, refresh token opaque de 48 octets aléatoires haché en SHA-256 et
+  `OpaqueApiTokenFactory` qui génère des jetons `whub_` puis ne stocke que leur hash SHA-256.
 - `backend/src/workhub/iam/infrastructure/repositories.py` : dépôts SQLAlchemy async ;
   la rotation est atomique (`UPDATE … WHERE hash = ancien AND non révoqué AND non expiré
   RETURNING user_id`), ce qui invalide immédiatement l'ancien jeton. Les dépôts
@@ -78,7 +82,10 @@ opaques portant des scopes explicites. Toutes ces identités convergent vers le 
   SHA-256 d'IP et de compte, `INSERT … ON CONFLICT` atomique et transaction séparée pour que
   les échecs restent comptabilisés malgré l'annulation de la transaction métier.
 - `backend/src/workhub/iam/infrastructure/config.py` : `AuthSettings` par variables
-  d'environnement.
+  d'environnement, mode `WORKHUB_ENV` (`production` par défaut), proxies de confiance et refus
+  en production des secrets d'exemple et de `WORKHUB_COOKIE_SECURE=false`.
+- `backend/src/workhub/audit/infrastructure/repositories.py` : projection SQLAlchemy de
+  `audit_log`, écriture dans la transaction de l'appelant.
 - `backend/src/workhub/iam/api.py` : composition des services, du résolveur de `Principal`,
   transaction par requête et paramètres publics du cookie.
 - `backend/src/workhub/iam/bootstrap.py` : commande `workhub-bootstrap` (script Python du
@@ -103,6 +110,10 @@ compteur positif et l'ordre des dates.
 `ck_integration_kind` (`opencode`, `claude_code`, `codex`, `other`) et
 `ck_api_token_expiration` (`expires_at is null or expires_at > created_at`).
 
+`audit_log` existe depuis le schéma v0 et reste append-only (`UPDATE`/`DELETE` rejetés,
+`TRUNCATE` rejeté par la migration `0002_audit_log_truncate_guard`). E1-08 l'alimente via
+`AuditEntry`, sans jeton brut.
+
 ### HTTP
 
 `backend/src/workhub/interfaces/rest/auth.py` expose :
@@ -117,7 +128,7 @@ compteur positif et l'ordre des dates.
 
 Le cookie s'appelle `workhub_refresh`, vaut 30 jours par défaut, est `HttpOnly`,
 `SameSite=Strict`, limité au chemin `/api/v1/auth` ; `Secure` est activé par
-`WORKHUB_COOKIE_SECURE=true`. Les réponses de jeton portent `Cache-Control: no-store`.
+`WORKHUB_COOKIE_SECURE=true` et devient obligatoire en production. Les réponses de jeton portent `Cache-Control: no-store`.
 
 `backend/src/workhub/interfaces/rest/integrations.py` expose la gestion des intégrations. Toutes
 les routes exigent un `Principal` porteur de `integrations:manage` ; un jeton d'intégration ne
@@ -134,14 +145,21 @@ possède jamais ce scope.
 La dépendance `current_principal` résout indifféremment les deux types de `Bearer`. Les routes
 de gestion restent réservées aux sessions humaines : le scope `integrations:manage` est refusé
 lors de la création d'un jeton. Les erreurs conservent l'enveloppe JSON commune et `403` est
-documenté globalement.
+documenté globalement. Les écritures d'intégration transmettent le `request_id` du middleware
+et sont auditées dans la même transaction.
+
+Nginx applique `limit_req` (20 tentatives/minute par IP sur le login) et `limit_conn` ; l'API
+ne lit `X-Forwarded-For` que si le pair appartient à `WORKHUB_TRUSTED_PROXIES`.
 
 ### Configuration
 
-`deploy/.env.example` et Compose ajoutent `WORKHUB_SECRET_KEY` (obligatoire, 32 caractères
-minimum), `WORKHUB_COOKIE_SECURE`, `WORKHUB_ACCESS_TOKEN_TTL_SECONDS` (900 s par défaut),
-`WORKHUB_REFRESH_TOKEN_TTL_SECONDS` (30 jours par défaut), `WORKHUB_LOGIN_MAX_ATTEMPTS`
-(5), `WORKHUB_LOGIN_ATTEMPT_WINDOW_SECONDS` (900 s) et `WORKHUB_LOGIN_LOCK_SECONDS` (900 s).
+`deploy/.env.example` et Compose ajoutent `WORKHUB_ENV` (`development` dans l'exemple,
+`production` par défaut), `WORKHUB_TRUSTED_PROXIES` (conteneur web), `WORKHUB_SECRET_KEY`
+(obligatoire, 32 caractères minimum), `WORKHUB_COOKIE_SECURE`, `WORKHUB_ACCESS_TOKEN_TTL_SECONDS`
+(900 s par défaut), `WORKHUB_REFRESH_TOKEN_TTL_SECONDS` (30 jours par défaut),
+`WORKHUB_LOGIN_MAX_ATTEMPTS` (5), `WORKHUB_LOGIN_ATTEMPT_WINDOW_SECONDS` (900 s) et
+`WORKHUB_LOGIN_LOCK_SECONDS` (900 s). En production, les valeurs d'exemple sont refusées et le
+cookie doit être `Secure`.
 
 ## Décisions et écarts par rapport au plan
 
@@ -201,11 +219,12 @@ UV_PYTHON=/usr/bin/python3.12 uv run pytest
 UV_PYTHON=/usr/bin/python3.12 uv run pip-audit
 ```
 
-Résultats obtenus le 2026-11-18 : lint et format verts, pyright `0 errors`, six contrats
-`import-linter` `KEPT`, **119 tests passés**, couverture **94,10 %**, audit sans
-vulnérabilité connue. Les **15 tests d'intégration** passent sur PostgreSQL réel, y compris
-`workhub-bootstrap`, le verrou par IP/compte, la persistance hachée des jetons, leur
-expiration, leur révocation et la résolution du `Principal`.
+Résultats obtenus le 2026-11-19 : lint et format verts, pyright `0 errors`, six contrats
+`import-linter` `KEPT`, **115 tests unitaires passés**, couverture unitaire **87,37 %**. Les
+tests d'intégration n'ont pas été rejoués localement faute de démon Docker ; la CI les exécute
+sur PostgreSQL réel. Ils couvrent `workhub-bootstrap`, le verrou par IP/compte, la persistance
+hachée des jetons, leur expiration, leur révocation, la désactivation du propriétaire et
+l'audit des écritures.
 
 Validation Compose sur un projet neuf (`workhub-e1-04`, ports isolés puis détruit) :
 
@@ -227,8 +246,8 @@ E1-03 ; la rotation et le logout restent couverts par ceux de session.
 ## Limites connues
 
 - La limitation couvre la connexion par IP et par compte, pas encore les autres routes
-  (E6-04). Derrière un proxy inverse, l'IP vue par l'API est celle du proxy tant que les
-  en-têtes `X-Forwarded-*` ne sont pas explicitement approuvés.
+  (E6-04). Les en-têtes `X-Forwarded-*` ne sont acceptés que depuis
+  `WORKHUB_TRUSTED_PROXIES` ; Nginx ajoute une limite de débit en amont.
 - Pas de récupération de mot de passe, de changement de mot de passe ou de MFA.
 - Aucune purge planifiée des sessions expirées, des compteurs `login_attempt` inactifs ni des
   jetons d'intégration expirés ou révoqués ; une tâche de rétention pourra s'appuyer sur
@@ -236,8 +255,8 @@ E1-03 ; la rotation et le logout restent couverts par ceux de session.
 - Un jeton d'intégration n'est pas encore restreint à un sous-ensemble de projets (E1-06) et
   la matrice de permissions explicite n'existe pas encore (E1-07) : l'administrateur porte
   temporairement `*`.
-- L'émission et la révocation des jetons ne sont pas encore auditées (E1-08) et aucune limite
-  de débit propre aux jetons n'est appliquée.
+- L'audit couvre les écritures d'intégration, pas encore le login/logout ni les autres modules ;
+  aucune limite de débit propre aux jetons n'est appliquée.
 - `last_used_at` est écrit à chaque requête authentifiée par jeton ; un cache ou une
   temporisation pourra réduire les écritures si nécessaire.
 - Le frontend n'a pas encore d'écran de connexion ni de page Intégrations (E1-09/E12) ; le
@@ -248,4 +267,3 @@ E1-03 ; la rotation et le logout restent couverts par ceux de session.
 
 1. **E1-06** — restriction des jetons par projet (`token_project_scope`).
 2. **E1-07** — matrice de permissions explicite et tests générés ressource × scope × principal.
-3. **E1-08** — journal d'audit append-only et service `audit.record()`.

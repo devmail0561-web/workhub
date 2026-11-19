@@ -43,13 +43,18 @@ ne parle à WorkHub que par HTTP. Cette contrainte est vérifiée par `import-li
 ## Lancer la stack locale
 
 ```bash
-cp deploy/.env.example deploy/.env     # définir les secrets et mots de passe
+cp deploy/.env.example deploy/.env
+# Générer des secrets locaux, puis les reporter dans deploy/.env :
+#   openssl rand -hex 32
 docker compose -f deploy/docker-compose.yml up -d --build
 ```
 
 `POSTGRES_PASSWORD`, `WORKHUB_OWNER_PASSWORD`, `WORKHUB_APP_PASSWORD` et
 `WORKHUB_SECRET_KEY` n'ont pas de valeur par défaut : Compose refuse de démarrer tant qu'ils ne
 sont pas définis dans `deploy/.env`. Le secret JWT doit contenir au moins 32 caractères.
+`deploy/.env.example` est un profil **développement** (HTTP local, valeurs d'exemple). Pour une
+exposition réelle, définir `WORKHUB_ENV=production`, `WORKHUB_COOKIE_SECURE=true` et générer
+tous les secrets : l'API refuse alors les valeurs d'exemple et les cookies non `Secure`.
 `POSTGRES_USER` sert uniquement au bootstrap ; les migrations utilisent `workhub_owner` et
 l'API `workhub_app`. Les ports sont publiés sur `127.0.0.1` uniquement (accès local).
 
@@ -106,6 +111,10 @@ docker compose -f deploy/docker-compose.yml down -v    # supprime aussi les donn
 Les ports sont surchargeables dans `deploy/.env` (`API_PORT`, `WEB_PORT`, `POSTGRES_PORT`).
 Le niveau de log se règle avec `LOG_LEVEL` (`INFO` par défaut). `WORKHUB_COOKIE_SECURE=true`
 est requis derrière HTTPS ; la valeur `false` de l'exemple permet les tests en HTTP local.
+`WORKHUB_TRUSTED_PROXIES` liste les adresses autorisées à fournir `X-Forwarded-For` ; par défaut,
+seul le conteneur web (`172.28.0.10`) est trusté. Nginx applique `limit_req` sur le login
+(20 tentatives/minute par IP) et sur `/api/`, ainsi que des limites de connexions ; Compose
+limite aussi la mémoire, les CPU et les PIDs des services.
 Les tentatives de connexion sont limitées par IP et par compte : après
 `WORKHUB_LOGIN_MAX_ATTEMPTS` échecs dans la fenêtre
 `WORKHUB_LOGIN_ATTEMPT_WINDOW_SECONDS`, le couple est verrouillé pendant

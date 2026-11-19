@@ -8,6 +8,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
+from workhub.audit.api import AuditEntry
 from workhub.iam.application.integration_ports import TokenIdentity
 from workhub.iam.application.ports import AccessToken
 from workhub.iam.domain.api_token import ApiToken
@@ -71,22 +72,22 @@ class FakeLoginAttemptLimiter:
                 self.locks[key] = now + timedelta(seconds=self.lock_seconds)
 
     async def reset(self, *, client_ip: str, email: str) -> None:
-        for key in self._keys(client_ip, email):
-            self.failures.pop(key, None)
-            self.locks.pop(key, None)
+        key = ("account", email.lower())
+        self.failures.pop(key, None)
+        self.locks.pop(key, None)
 
 
 class FakePasswordHasher:
     def __init__(self) -> None:
         self.dummy_checks = 0
 
-    def hash(self, password: str) -> str:
+    async def hash(self, password: str) -> str:
         return f"hash:{password}"
 
-    def verify(self, password_hash: str, password: str) -> bool:
-        return password_hash == self.hash(password)
+    async def verify(self, password_hash: str, password: str) -> bool:
+        return password_hash == await self.hash(password)
 
-    def verify_dummy(self, password: str) -> None:
+    async def verify_dummy(self, password: str) -> None:
         self.dummy_checks += 1
 
 
@@ -246,9 +247,14 @@ class FakeIntegrationRepository:
 
 
 class FakeApiTokenRepository:
-    def __init__(self, integrations: FakeIntegrationRepository | None = None) -> None:
+    def __init__(
+        self,
+        integrations: FakeIntegrationRepository | None = None,
+        users: FakeUserRepository | None = None,
+    ) -> None:
         self.tokens: dict[UUID, ApiToken] = {}
         self.integrations = integrations or FakeIntegrationRepository()
+        self.users = users
 
     async def add(self, token: ApiToken) -> None:
         self.tokens[token.id] = token
@@ -268,6 +274,13 @@ class FakeApiTokenRepository:
                 and token.is_active(now)
                 and integration is not None
                 and integration.is_active
+                and (
+                    self.users is None
+                    or (
+                        (owner := self.users.users.get(integration.owner_id)) is not None
+                        and owner.is_active
+                    )
+                )
             ):
                 return TokenIdentity(token=token, integration=integration)
         return None
@@ -329,3 +342,19 @@ class FakePrincipalResolver:
         if credential != self.token:
             raise AuthenticationError("Jeton invalide ou expiré")
         return self.principal
+
+
+class FakeCommit:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def __call__(self) -> None:
+        self.calls += 1
+
+
+class FakeAuditRecorder:
+    def __init__(self) -> None:
+        self.entries: list[AuditEntry] = []
+
+    async def record(self, entry: AuditEntry) -> None:
+        self.entries.append(entry)

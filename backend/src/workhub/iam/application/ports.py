@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
@@ -9,6 +10,8 @@ from uuid import UUID
 
 from workhub.iam.domain.session import Session
 from workhub.iam.domain.user import User
+
+type Commit = Callable[[], Awaitable[None]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,11 +63,11 @@ class LoginAttemptLimiter(Protocol):
 class PasswordHasher(Protocol):
     """Hachage et vérification des mots de passe."""
 
-    def hash(self, password: str) -> str: ...
+    async def hash(self, password: str) -> str: ...
 
-    def verify(self, password_hash: str, password: str) -> bool: ...
+    async def verify(self, password_hash: str, password: str) -> bool: ...
 
-    def verify_dummy(self, password: str) -> None: ...
+    async def verify_dummy(self, password: str) -> None: ...
 
 
 class TokenIssuer(Protocol):

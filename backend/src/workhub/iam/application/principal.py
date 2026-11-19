@@ -6,7 +6,7 @@ from workhub.iam.application.integration_ports import (
     ApiTokenFactory,
     ApiTokenRepository,
 )
-from workhub.iam.application.ports import TokenIssuer, UserRepository
+from workhub.iam.application.ports import Commit, TokenIssuer, UserRepository
 from workhub.iam.application.views import UserView
 from workhub.shared.api import (
     AuthenticationError,
@@ -26,12 +26,14 @@ class PrincipalResolver:
         tokens: ApiTokenRepository,
         token_issuer: TokenIssuer,
         token_factory: ApiTokenFactory,
+        commit: Commit,
         clock: Clock,
     ) -> None:
         self._users = users
         self._tokens = tokens
         self._token_issuer = token_issuer
         self._token_factory = token_factory
+        self._commit = commit
         self._clock = clock
 
     async def resolve(self, credential: str) -> Principal:
@@ -45,6 +47,7 @@ class PrincipalResolver:
             if identity is None:
                 raise AuthenticationError("Jeton invalide ou expiré")
             await self._tokens.touch_last_used(identity.token.id, now)
+            await self._commit()
             return Principal(
                 id=identity.integration.id,
                 type=PrincipalType.INTEGRATION,

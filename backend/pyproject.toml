@@ -128,6 +128,13 @@ modules = [
     "workhub.integrations",
     "workhub.audit",
 ]
+ignore_imports = [
+    "workhub.iam.application.integrations -> workhub.audit.api",
+    "workhub.iam.api -> workhub.audit.infrastructure.repositories",
+    "workhub.skills.application.service -> workhub.audit.api",
+    "workhub.skills.api -> workhub.audit.infrastructure.repositories",
+    "workhub.skills.api -> workhub.iam.api",
+]
 
 [[tool.importlinter.contracts]]
 name = "4. Les interfaces ne parlent qu'à la couche application"
@@ -140,6 +147,8 @@ ignore_imports = [
     "workhub.interfaces.rest.auth -> workhub.iam.api",
     "workhub.interfaces.rest.dependencies -> workhub.iam.api",
     "workhub.interfaces.rest.integrations -> workhub.iam.api",
+    "workhub.interfaces.rest.app -> workhub.iam.api",
+    "workhub.interfaces.rest.skills -> workhub.skills.api",
 ]
 
 [[tool.importlinter.contracts]]
@@ -186,4 +195,6 @@ forbidden_modules = [
 ignore_imports = [
     "workhub.shared.api -> workhub.shared.domain.*",
     "workhub.iam.infrastructure.database -> workhub.shared.infrastructure.database",
+    "workhub.audit.infrastructure.repositories -> workhub.shared.infrastructure.database",
+    "workhub.skills.infrastructure.repositories -> workhub.shared.infrastructure.database",
 ]

@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 from tests.unit.iam.fakes import (
     FakeClock,
+    FakeCommit,
     FakeLoginAttemptLimiter,
     FakePasswordHasher,
     FakeRefreshTokenFactory,
@@ -14,6 +15,7 @@ from tests.unit.iam.fakes import (
 
 from workhub.iam.application.auth import AuthService
 from workhub.iam.application.bootstrap import bootstrap_admin
+from workhub.iam.application.ports import Commit
 from workhub.shared.api import (
     AuthenticationError,
     ConflictError,
@@ -29,6 +31,7 @@ def build_service(
     clock: FakeClock | None = None,
     hasher: FakePasswordHasher | None = None,
     max_attempts: int = 5,
+    commit: Commit | None = None,
 ) -> AuthService:
     clock = clock or FakeClock()
     return AuthService(
@@ -41,6 +44,7 @@ def build_service(
         clock=clock,
         access_token_ttl_seconds=900,
         refresh_token_ttl_seconds=3600,
+        commit=commit or FakeCommit(),
     )
 
 
@@ -216,7 +220,27 @@ async def test_login_locks_temporarily_by_account_and_ip() -> None:
     assert login.user.id == user.id
 
 
-async def test_login_success_resets_failed_attempts() -> None:
+async def test_login_success_resets_failed_account_attempts() -> None:
+    users = FakeUserRepository()
+    user = make_user()
+    users.users[user.id] = user
+    service = build_service(users=users, max_attempts=3)
+    first_ip = "203.0.113.1"
+    second_ip = "203.0.113.2"
+
+    for _ in range(2):
+        with pytest.raises(AuthenticationError):
+            await service.login(user.email, "wrong-password", first_ip)
+    await service.login(user.email, "correct-horse-battery", first_ip)
+
+    for _ in range(2):
+        with pytest.raises(AuthenticationError):
+            await service.login(user.email, "wrong-password", second_ip)
+    login = await service.login(user.email, "correct-horse-battery", second_ip)
+    assert login.user.id == user.id
+
+
+async def test_login_success_does_not_reset_the_ip_counter() -> None:
     users = FakeUserRepository()
     user = make_user()
     users.users[user.id] = user
@@ -227,9 +251,36 @@ async def test_login_success_resets_failed_attempts() -> None:
         with pytest.raises(AuthenticationError):
             await service.login(user.email, "wrong-password", ip)
     await service.login(user.email, "correct-horse-battery", ip)
+    with pytest.raises(AuthenticationError):
+        await service.login(user.email, "wrong-password", ip)
 
-    for _ in range(2):
-        with pytest.raises(AuthenticationError):
-            await service.login(user.email, "wrong-password", ip)
-    login = await service.login(user.email, "correct-horse-battery", ip)
-    assert login.user.id == user.id
+    with pytest.raises(RateLimitedError):
+        await service.login(user.email, "correct-horse-battery", ip)
+
+
+async def test_login_propagates_a_commit_failure() -> None:
+    users = FakeUserRepository()
+    user = make_user()
+    users.users[user.id] = user
+
+    class FailingCommit:
+        async def __call__(self) -> None:
+            raise RuntimeError("commit failed")
+
+    service = build_service(users=users, commit=FailingCommit())
+
+    with pytest.raises(RuntimeError, match="commit failed"):
+        await service.login(user.email, "correct-horse-battery", "203.0.113.1")
+
+
+async def test_logout_commits_before_returning() -> None:
+    users = FakeUserRepository()
+    user = make_user()
+    users.users[user.id] = user
+    commit = FakeCommit()
+    service = build_service(users=users, commit=commit)
+    login = await service.login(user.email, "correct-horse-battery", "203.0.113.1")
+
+    await service.logout(login.refresh_token)
+
+    assert commit.calls >= 2

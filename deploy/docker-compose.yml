@@ -1,13 +1,20 @@
 name: workhub
 
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 x-common-environment: &common-environment
-  WORKHUB_ENV: ${WORKHUB_ENV:-development}
+  WORKHUB_ENV: ${WORKHUB_ENV:-production}
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
 
 x-app-environment: &app-environment
   <<: *common-environment
   DATABASE_URL: postgresql+psycopg://workhub_app:${WORKHUB_APP_PASSWORD:?Définir WORKHUB_APP_PASSWORD dans deploy/.env}@db:5432/${POSTGRES_DB:-workhub}
   WORKHUB_SECRET_KEY: ${WORKHUB_SECRET_KEY:?Définir WORKHUB_SECRET_KEY dans deploy/.env}
+  WORKHUB_TRUSTED_PROXIES: ${WORKHUB_TRUSTED_PROXIES:-172.28.0.10}
   WORKHUB_COOKIE_SECURE: ${WORKHUB_COOKIE_SECURE:-false}
   WORKHUB_ACCESS_TOKEN_TTL_SECONDS: ${WORKHUB_ACCESS_TOKEN_TTL_SECONDS:-900}
   WORKHUB_REFRESH_TOKEN_TTL_SECONDS: ${WORKHUB_REFRESH_TOKEN_TTL_SECONDS:-2592000}
@@ -28,6 +35,8 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-workhub}
     volumes:
       - pgdata:/var/lib/postgresql/data
+    networks:
+      - backend
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     healthcheck:
@@ -35,6 +44,10 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    mem_limit: 1g
+    cpus: 2.0
+    pids_limit: 256
+    logging: *default-logging
     restart: unless-stopped
 
   db-bootstrap:
@@ -50,6 +63,8 @@ services:
       WORKHUB_APP_PASSWORD: ${WORKHUB_APP_PASSWORD:?Définir WORKHUB_APP_PASSWORD dans deploy/.env}
     volumes:
       - ./postgres/bootstrap.sh:/bootstrap.sh:ro
+    networks:
+      - backend
     depends_on:
       db:
         condition: service_healthy
@@ -59,6 +74,8 @@ services:
       context: ../backend
     command: ["alembic", "upgrade", "head"]
     environment: *owner-environment
+    networks:
+      - backend
     depends_on:
       db:
         condition: service_healthy
@@ -75,6 +92,8 @@ services:
       WORKHUB_OWNER_PASSWORD: ${WORKHUB_OWNER_PASSWORD:?Définir WORKHUB_OWNER_PASSWORD dans deploy/.env}
     volumes:
       - ./postgres/permissions.sh:/permissions.sh:ro
+    networks:
+      - backend
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -97,6 +116,15 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+    networks:
+      - backend
+      - frontend
     restart: unless-stopped
 
   web:
@@ -112,7 +140,26 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    mem_limit: 128m
+    cpus: 0.5
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+    networks:
+      frontend:
+        ipv4_address: 172.28.0.10
     restart: unless-stopped
+
+networks:
+  backend:
+    ipam:
+      config:
+        - subnet: 172.28.1.0/24
+  frontend:
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
 
 volumes:
   pgdata:

@@ -9,7 +9,9 @@ import pytest
 from tests.unit.iam.fakes import (
     FakeApiTokenFactory,
     FakeApiTokenRepository,
+    FakeAuditRecorder,
     FakeClock,
+    FakeCommit,
     FakeIntegrationRepository,
     FakePrincipalResolver,
     make_principal,
@@ -38,6 +40,8 @@ def service(clock: FakeClock) -> IntegrationService:
         integrations=integrations,
         tokens=FakeApiTokenRepository(integrations),
         token_factory=FakeApiTokenFactory(),
+        audit=FakeAuditRecorder(),
+        commit=FakeCommit(),
         clock=clock,
     )
 
@@ -160,6 +164,8 @@ async def test_principal_without_scope_receives_403(
         integrations=FakeIntegrationRepository(),
         tokens=FakeApiTokenRepository(),
         token_factory=FakeApiTokenFactory(),
+        audit=FakeAuditRecorder(),
+        commit=FakeCommit(),
         clock=clock,
     )
     principal = make_principal(is_admin=False, scopes=frozenset({"skills:read"}))

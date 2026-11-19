@@ -8,6 +8,7 @@ from tests.unit.iam.fakes import (
     FakeApiTokenFactory,
     FakeApiTokenRepository,
     FakeClock,
+    FakeCommit,
     FakeIntegrationRepository,
     FakeTokenIssuer,
     FakeUserRepository,
@@ -27,12 +28,14 @@ def build_resolver(
     tokens: FakeApiTokenRepository,
     clock: FakeClock,
     factory: FakeApiTokenFactory,
+    commit: FakeCommit | None = None,
 ) -> PrincipalResolver:
     return PrincipalResolver(
         users=users,
         tokens=tokens,
         token_issuer=FakeTokenIssuer(),
         token_factory=factory,
+        commit=commit or FakeCommit(),
         clock=clock,
     )
 
@@ -53,7 +56,9 @@ def _api_token_setup(
     integrations = FakeIntegrationRepository()
     integration = make_integration(owner_id=user.id, clock=clock)
     integrations.integrations[integration.id] = integration
-    tokens = FakeApiTokenRepository(integrations)
+    users = FakeUserRepository()
+    users.users[user.id] = user
+    tokens = FakeApiTokenRepository(integrations, users)
     factory = FakeApiTokenFactory()
     raw, token_hash = factory.new_token()
     expires_at = None if expires_delta is None else clock.now() + timedelta(seconds=expires_delta)
@@ -67,7 +72,7 @@ def _api_token_setup(
     )
     tokens.tokens[token.id] = token
     resolver = build_resolver(
-        users=FakeUserRepository(),
+        users=users,
         integrations=integrations,
         tokens=tokens,
         clock=clock,
@@ -150,3 +155,33 @@ async def test_api_token_expiration_revocation_and_unknown_hash_are_rejected() -
         await resolver.resolve(raw)
     with pytest.raises(AuthenticationError):
         await resolver.resolve(f"{factory.new_token()[0]}")
+
+
+async def test_rejects_api_token_when_owner_is_inactive() -> None:
+    clock = FakeClock()
+    user = make_user(is_active=False)
+    users = FakeUserRepository()
+    users.users[user.id] = user
+    integrations = FakeIntegrationRepository()
+    integration = make_integration(owner_id=user.id, clock=clock)
+    integrations.integrations[integration.id] = integration
+    tokens = FakeApiTokenRepository(integrations, users)
+    factory = FakeApiTokenFactory()
+    raw, token_hash = factory.new_token()
+    tokens.tokens[uuid4()] = ApiToken(
+        id=uuid4(),
+        integration_id=integration.id,
+        token_sha256=token_hash,
+        scopes=frozenset({"skills:read"}),
+        created_at=clock.now(),
+    )
+    resolver = build_resolver(
+        users=users,
+        integrations=integrations,
+        tokens=tokens,
+        clock=clock,
+        factory=factory,
+    )
+
+    with pytest.raises(AuthenticationError):
+        await resolver.resolve(raw)

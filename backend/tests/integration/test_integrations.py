@@ -4,16 +4,18 @@ from datetime import timedelta
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from workhub.audit.infrastructure.repositories import SqlAlchemyAuditRecorder
 from workhub.iam.application.bootstrap import bootstrap_admin
 from workhub.iam.application.integrations import IntegrationService
 from workhub.iam.application.principal import PrincipalResolver
 from workhub.iam.domain.api_token import API_TOKEN_PREFIX
 from workhub.iam.infrastructure.repositories import (
     ApiTokenRow,
+    AppUserRow,
     SqlAlchemyApiTokenRepository,
     SqlAlchemyIntegrationRepository,
     SqlAlchemyUserRepository,
@@ -47,6 +49,8 @@ def _services(
             integrations=integrations,
             tokens=tokens,
             token_factory=factory,
+            audit=SqlAlchemyAuditRecorder(session),
+            commit=session.commit,
             clock=clock,
         ),
         PrincipalResolver(
@@ -54,6 +58,7 @@ def _services(
             tokens=tokens,
             token_issuer=JwtTokenIssuer(SECRET),
             token_factory=factory,
+            commit=session.commit,
             clock=clock,
         ),
     )
@@ -205,3 +210,72 @@ async def test_schema_guards_reject_invalid_kinds_and_expirations(
             {"integration_id": integration_id},
         )
     await session.rollback()
+
+
+async def test_owner_deactivation_invalidates_existing_tokens(session: AsyncSession) -> None:
+    owner = await bootstrap_admin(
+        users=SqlAlchemyUserRepository(session),
+        password_hasher=Argon2PasswordHasher(),
+        clock=SystemClock(),
+        email=f"disabled-{uuid4()}@example.test",
+        display_name="Ada",
+        password="correct-horse-battery",
+    )
+    await session.commit()
+    service, resolver = _services(session)
+    created = await service.create(
+        owner.to_principal(),
+        name="OpenCode",
+        kind="opencode",
+        scopes=["skills:read"],
+    )
+
+    await session.execute(
+        update(AppUserRow).where(AppUserRow.id == owner.id).values(is_active=False)
+    )
+    await session.commit()
+
+    with pytest.raises(AuthenticationError):
+        await resolver.resolve(created.token.token)
+
+
+async def test_integration_writes_are_audited(session: AsyncSession) -> None:
+    owner = await bootstrap_admin(
+        users=SqlAlchemyUserRepository(session),
+        password_hasher=Argon2PasswordHasher(),
+        clock=SystemClock(),
+        email=f"audit-{uuid4()}@example.test",
+        display_name="Ada",
+        password="correct-horse-battery",
+    )
+    await session.commit()
+    service, _ = _services(session)
+    request_id = f"req-{uuid4()}"
+
+    created = await service.create(
+        owner.to_principal(),
+        name="OpenCode",
+        kind="opencode",
+        scopes=["skills:read"],
+        request_id=request_id,
+    )
+    await service.revoke(
+        owner.to_principal(),
+        created.integration.id,
+        request_id=request_id,
+    )
+
+    rows = (
+        await session.execute(
+            text(
+                "select action, resource_type, resource_id, request_id, principal_id "
+                "from audit_log where request_id = :request_id order by id"
+            ),
+            {"request_id": request_id},
+        )
+    ).all()
+    assert [row.action for row in rows] == ["integration.create", "integration.revoke"]
+    assert [row.resource_type for row in rows] == ["integration", "integration"]
+    assert rows[0].resource_id == str(created.integration.id)
+    assert rows[0].principal_id == owner.id
+    assert created.token.token not in repr(rows)

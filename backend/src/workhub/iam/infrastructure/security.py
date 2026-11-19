@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import secrets
+import threading
 from datetime import datetime, timedelta
 from functools import lru_cache
 from typing import Any
@@ -19,6 +21,7 @@ from workhub.shared.api import AuthenticationError
 
 _ACCESS_TOKEN_TYPE = "access"
 _DUMMY_PASSWORD = "workhub-dummy-password"
+_ARGON2_LIMIT = threading.BoundedSemaphore(value=2)
 
 
 def _argon2() -> Argon2:
@@ -37,23 +40,33 @@ class Argon2PasswordHasher:
     def __init__(self) -> None:
         self._hasher = _argon2()
 
-    def hash(self, password: str) -> str:
-        return self._hasher.hash(password)
+    async def hash(self, password: str) -> str:
+        return await asyncio.to_thread(self._hash_sync, password)
 
-    def verify(self, password_hash: str, password: str) -> bool:
+    async def verify(self, password_hash: str, password: str) -> bool:
+        return await asyncio.to_thread(self._verify_sync, password_hash, password)
+
+    async def verify_dummy(self, password: str) -> None:
+        """Consomme un temps comparable quand l'utilisateur n'existe pas."""
+        dummy_hash = await asyncio.to_thread(_dummy_hash)
+        await self.verify(dummy_hash, password)
+
+    def _hash_sync(self, password: str) -> str:
+        with _ARGON2_LIMIT:
+            return self._hasher.hash(password)
+
+    def _verify_sync(self, password_hash: str, password: str) -> bool:
         try:
-            return self._hasher.verify(password_hash, password)
+            with _ARGON2_LIMIT:
+                return self._hasher.verify(password_hash, password)
         except (InvalidHashError, VerificationError, VerifyMismatchError):
             return False
-
-    def verify_dummy(self, password: str) -> None:
-        """Consomme un temps comparable quand l'utilisateur n'existe pas."""
-        self.verify(_dummy_hash(), password)
 
 
 @lru_cache(maxsize=1)
 def _dummy_hash() -> str:
-    return _argon2().hash(_DUMMY_PASSWORD)
+    with _ARGON2_LIMIT:
+        return _argon2().hash(_DUMMY_PASSWORD)
 
 
 class JwtTokenIssuer:

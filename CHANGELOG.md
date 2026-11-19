@@ -102,6 +102,20 @@ développement : la version `0.1.0` correspond à l'amorçage, sans release publ
 
 ### Fixed
 
+- **Verrouillage derrière proxy** : l'IP client n'est lue depuis `X-Forwarded-For` que si le
+  pair est listé dans `WORKHUB_TRUSTED_PROXIES` (conteneur web par défaut) ; Nginx limite en
+  plus les tentatives de connexion (`limit_req`/`limit_conn`).
+- **Jeton d'intégration après désactivation** : la résolution vérifie désormais que le
+  propriétaire est actif.
+- **Configuration de production** : `WORKHUB_ENV` est lu ; en production, les secrets
+  d'exemple et `WORKHUB_COOKIE_SECURE=false` sont refusés.
+- **Commit après réponse HTTP** : les services d'authentification, d'intégration et de
+  résolution du principal committent avant de répondre ; plus de succès HTTP sur transaction
+  annulée en teardown.
+- **Coût Argon2 et limite non atomique** : hachage/vérification hors boucle avec sémaphore,
+  et réussite de connexion ne remet à zéro que le compteur du compte, pas celui de l'IP.
+- **Audit des intégrations (E1-08)** : créations/révocations d'intégrations et de jetons
+  journalisées avec `request_id`, sans jeton brut.
 - **`TRUNCATE audit_log`** : l'append-only est désormais protégé aussi au niveau statement ;
   `workhub_app` n'a pas le privilège et le trigger rejette l'opération côté owner.
 - **FK sans index** : 21 index ajoutés pour éviter les parcours séquentiels lors des

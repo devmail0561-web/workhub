@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from workhub.iam.application.ports import (
+    Commit,
     LoginAttemptLimiter,
     PasswordHasher,
     RefreshTokenFactory,
@@ -33,6 +34,7 @@ class AuthService:
         clock: Clock,
         access_token_ttl_seconds: int,
         refresh_token_ttl_seconds: int,
+        commit: Commit,
         id_factory: IdFactory = new_id,
     ) -> None:
         self._users = users
@@ -44,6 +46,7 @@ class AuthService:
         self._clock = clock
         self._access_token_ttl_seconds = access_token_ttl_seconds
         self._refresh_token_ttl_seconds = refresh_token_ttl_seconds
+        self._commit = commit
         self._id_factory = id_factory
 
     @property
@@ -61,10 +64,10 @@ class AuthService:
         now = self._clock.now()
         user = await self._users.find_by_email(normalized)
         if user is None:
-            self._password_hasher.verify_dummy(password)
+            await self._password_hasher.verify_dummy(password)
             await self._login_attempts.record_failure(client_ip=client_ip, email=normalized)
             raise AuthenticationError("Identifiants invalides")
-        password_matches = self._password_hasher.verify(user.password_hash, password)
+        password_matches = await self._password_hasher.verify(user.password_hash, password)
         if not user.is_active or not password_matches:
             await self._login_attempts.record_failure(client_ip=client_ip, email=normalized)
             raise AuthenticationError("Identifiants invalides")
@@ -83,6 +86,7 @@ class AuthService:
                 expires_at=refresh_expires_at,
             )
         )
+        await self._commit()
         return self._result(user, now, raw_refresh, refresh_expires_at)
 
     async def refresh(self, refresh_token: str) -> AuthResult:
@@ -102,7 +106,9 @@ class AuthService:
         user = await self._users.find_by_id(user_id)
         if user is None or not user.is_active:
             await self._sessions.revoke_by_hash(refresh_hash, now)
+            await self._commit()
             raise AuthenticationError("Session expirée ou révoquée")
+        await self._commit()
         return self._result(user, now, raw_refresh, refresh_expires_at)
 
     async def logout(self, refresh_token: str) -> None:
@@ -111,6 +117,7 @@ class AuthService:
             self._refresh_tokens.hash_token(refresh_token),
             self._clock.now(),
         )
+        await self._commit()
 
     async def authenticate(self, access_token: str) -> UserView:
         """Valide un JWT d'accès et retourne l'utilisateur actif."""

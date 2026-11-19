@@ -7,6 +7,7 @@ import httpx
 import pytest
 from tests.unit.iam.fakes import (
     FakeClock,
+    FakeCommit,
     FakeLoginAttemptLimiter,
     FakePasswordHasher,
     FakeRefreshTokenFactory,
@@ -24,21 +25,31 @@ COOKIE_NAME = "workhub_refresh"
 
 
 @pytest.fixture
-def auth_service() -> AuthService:
+def clock() -> FakeClock:
+    return FakeClock()
+
+
+@pytest.fixture
+def limiter(clock: FakeClock) -> FakeLoginAttemptLimiter:
+    return FakeLoginAttemptLimiter(clock, max_attempts=3)
+
+
+@pytest.fixture
+def auth_service(clock: FakeClock, limiter: FakeLoginAttemptLimiter) -> AuthService:
     users = FakeUserRepository()
     user = make_user()
     users.users[user.id] = user
-    clock = FakeClock()
     return AuthService(
         users=users,
         sessions=FakeSessionRepository(),
-        login_attempts=FakeLoginAttemptLimiter(clock, max_attempts=3),
+        login_attempts=limiter,
         password_hasher=FakePasswordHasher(),
         token_issuer=FakeTokenIssuer(),
         refresh_tokens=FakeRefreshTokenFactory(),
         clock=clock,
         access_token_ttl_seconds=900,
         refresh_token_ttl_seconds=3600,
+        commit=FakeCommit(),
     )
 
 
@@ -183,3 +194,41 @@ async def test_principal_returns_scopes_for_the_resolved_identity(
         "display_name": "Admin",
         "scopes": ["skills:read", "tools:read"],
     }
+
+
+async def test_login_uses_forwarded_ip_only_from_a_trusted_proxy(
+    client: httpx.AsyncClient,
+    limiter: FakeLoginAttemptLimiter,
+) -> None:
+    response = await client.post(
+        "/api/v1/auth/login",
+        headers={"X-Forwarded-For": "203.0.113.77"},
+        json={"email": "admin@example.test", "password": "faux"},
+    )
+
+    assert response.status_code == 401
+    assert ("ip", "203.0.113.77") in limiter.failures
+
+
+async def test_login_ignores_forwarded_ip_from_an_untrusted_peer(
+    auth_service: AuthService,
+    limiter: FakeLoginAttemptLimiter,
+) -> None:
+    async def override() -> AsyncIterator[AuthService]:
+        yield auth_service
+
+    app.dependency_overrides[get_auth_service] = override
+    transport = httpx.ASGITransport(app=app, client=("198.51.100.9", 1234))
+    try:
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/api/v1/auth/login",
+                headers={"X-Forwarded-For": "203.0.113.77"},
+                json={"email": "admin@example.test", "password": "faux"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 401
+    assert ("ip", "198.51.100.9") in limiter.failures
+    assert ("ip", "203.0.113.77") not in limiter.failures

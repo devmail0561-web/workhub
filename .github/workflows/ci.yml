@@ -42,6 +42,8 @@ jobs:
     env:
       DATABASE_URL: postgresql+psycopg://workhub:workhub@localhost:55432/workhub_test
       WORKHUB_TEST_DATABASE_URL: postgresql+psycopg://workhub:workhub@localhost:55432/workhub_test
+      WORKHUB_ENV: test
+      WORKHUB_SECRET_KEY: test-secret-key-0123456789abcdef
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1

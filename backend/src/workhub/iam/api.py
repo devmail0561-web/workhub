@@ -11,6 +11,7 @@ from functools import lru_cache
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from workhub.audit.infrastructure.repositories import SqlAlchemyAuditRecorder
 from workhub.iam.application.auth import AuthService
 from workhub.iam.application.integrations import IntegrationService
 from workhub.iam.application.ports import AccessToken
@@ -116,14 +117,13 @@ async def get_auth_service() -> AsyncIterator[AuthService]:
             clock=SystemClock(),
             access_token_ttl_seconds=settings.access_token_ttl_seconds,
             refresh_token_ttl_seconds=settings.refresh_token_ttl_seconds,
+            commit=session.commit,
         )
         try:
             yield service
         except Exception:
             await session.rollback()
             raise
-        else:
-            await session.commit()
 
 
 async def get_integration_service() -> AsyncIterator[IntegrationService]:
@@ -134,6 +134,8 @@ async def get_integration_service() -> AsyncIterator[IntegrationService]:
             integrations=SqlAlchemyIntegrationRepository(session),
             tokens=SqlAlchemyApiTokenRepository(session),
             token_factory=OpaqueApiTokenFactory(),
+            audit=SqlAlchemyAuditRecorder(session),
+            commit=session.commit,
             clock=SystemClock(),
         )
         try:
@@ -141,8 +143,6 @@ async def get_integration_service() -> AsyncIterator[IntegrationService]:
         except Exception:
             await session.rollback()
             raise
-        else:
-            await session.commit()
 
 
 async def get_principal_resolver() -> AsyncIterator[PrincipalResolver]:
@@ -155,6 +155,7 @@ async def get_principal_resolver() -> AsyncIterator[PrincipalResolver]:
             tokens=SqlAlchemyApiTokenRepository(session),
             token_issuer=JwtTokenIssuer(settings.secret_key.get_secret_value()),
             token_factory=OpaqueApiTokenFactory(),
+            commit=session.commit,
             clock=SystemClock(),
         )
         try:
@@ -162,5 +163,3 @@ async def get_principal_resolver() -> AsyncIterator[PrincipalResolver]:
         except Exception:
             await session.rollback()
             raise
-        else:
-            await session.commit()
