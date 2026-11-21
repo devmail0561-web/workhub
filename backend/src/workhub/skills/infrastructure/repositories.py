@@ -178,6 +178,8 @@ def _to_version(row: SkillVersionRow) -> SkillVersion:
         author_principal_id=row.author_principal_id,
         created_at=row.created_at,
         published_at=row.published_at,
+        origin_kind=row.origin_kind,
+        origin_integration_id=row.origin_integration_id,
     )
 
 

@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Request, Response, status
+from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
 from pydantic import BaseModel, Field
 
 from workhub.interfaces.rest.dependencies import current_principal
@@ -19,11 +19,13 @@ from workhub.skills.api import (
     CreatedSkillView,
     DraftFileView,
     DraftView,
+    FileDiffView,
     SkillFile,
     SkillService,
     SkillView,
     StoredFile,
     VersionDetailView,
+    VersionDiffView,
     VersionView,
     get_skill_service,
 )
@@ -236,6 +238,56 @@ class VersionDetailResponse(BaseModel):
         )
 
 
+class FileDiffResponse(BaseModel):
+    """Différence d'un fichier entre deux versions."""
+
+    path: str
+    change: str
+    before_sha256: str | None
+    after_sha256: str | None
+    before_size: int
+    after_size: int
+    before_mode: str | None
+    after_mode: str | None
+    binary: bool
+    diff: str | None
+    truncated: bool
+
+    @classmethod
+    def from_view(cls, diff: FileDiffView) -> FileDiffResponse:
+        return cls(
+            path=diff.path,
+            change=diff.change,
+            before_sha256=diff.before_sha256.hex() if diff.before_sha256 is not None else None,
+            after_sha256=diff.after_sha256.hex() if diff.after_sha256 is not None else None,
+            before_size=diff.before_size,
+            after_size=diff.after_size,
+            before_mode=diff.before_mode,
+            after_mode=diff.after_mode,
+            binary=diff.binary,
+            diff=diff.text,
+            truncated=diff.truncated,
+        )
+
+
+class VersionDiffResponse(BaseModel):
+    """Comparaison de deux versions publiées."""
+
+    slug: str
+    from_semver: str
+    to_semver: str
+    files: list[FileDiffResponse]
+
+    @classmethod
+    def from_view(cls, diff: VersionDiffView) -> VersionDiffResponse:
+        return cls(
+            slug=diff.slug,
+            from_semver=diff.from_semver,
+            to_semver=diff.to_semver,
+            files=[FileDiffResponse.from_view(file) for file in diff.files],
+        )
+
+
 def _decode_file(file: SkillFileRequest) -> SkillFile:
     try:
         content = base64.b64decode(file.content_b64, validate=True)
@@ -397,3 +449,22 @@ async def get_version(
 ) -> VersionDetailResponse:
     """Retourne une version publiée."""
     return VersionDetailResponse.from_view(await service.get_version(principal, slug, semver))
+
+
+@router.get("/{slug}/diff", response_model=VersionDiffResponse)
+async def diff_versions(
+    slug: str,
+    from_semver: Annotated[str, Query(alias="from")],
+    to_semver: Annotated[str, Query(alias="to")],
+    principal: Annotated[Principal, Depends(current_principal)],
+    service: Annotated[SkillService, Depends(get_skill_service)],
+) -> VersionDiffResponse:
+    """Compare deux versions publiées."""
+    return VersionDiffResponse.from_view(
+        await service.diff(
+            principal,
+            slug,
+            from_semver=from_semver,
+            to_semver=to_semver,
+        )
+    )

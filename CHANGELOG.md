@@ -45,6 +45,9 @@ développement : la version `0.1.0` correspond à l'amorçage, sans release publ
   `skills:propose` et `skills:publish` ; l'administrateur conserve `*`.
 - **Requirements complets** : support de `hashes` et `tool_version_id`, validation des formes
   `package|system|service|script` avant insertion, tri canonique et hash stable.
+- **Diff de versions (E2-08)** : `GET /api/v1/skills/{slug}/diff?from=&to=` compare deux
+  versions publiées, classe les fichiers ajoutés/modifiés/supprimés, produit des diffs
+  unifiés texte tronqués à 200 000 caractères et signale les contenus binaires.
 - **Durcissement base de données** : rôles `workhub_owner` (migrations) et `workhub_app`
   (runtime, sans DDL ni `TRUNCATE`), scripts `deploy/postgres/bootstrap.sh` et
   `permissions.sh`, services Compose `db-bootstrap` et `db-grants`.

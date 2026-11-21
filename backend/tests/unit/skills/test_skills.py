@@ -26,6 +26,7 @@ from workhub.skills.api import SkillService, get_skill_service
 from workhub.skills.domain.skill import (
     SkillFile,
     build_manifest,
+    diff_files,
     manifest_sha256,
     normalize_requirements,
     semver_key,
@@ -183,6 +184,69 @@ def test_semver_ordering() -> None:
     assert semver_key("1.0.0-2") < semver_key("1.0.0-10")
     assert semver_key("1.0.0-alpha.2") < semver_key("1.0.0-alpha.10")
     assert semver_key("1.0.0-alpha.10") < semver_key("1.0.0-alpha.beta")
+
+
+def test_diff_files_reports_changes_and_handles_binary_content() -> None:
+    before = (
+        SkillFile(path="SKILL.md", content=SKILL_MD),
+        SkillFile(path="old.txt", content=b"old\n"),
+        SkillFile(path="same.txt", content=b"same\n"),
+        SkillFile(path="run.sh", content=b"#!/bin/sh\n", mode="0644"),
+    )
+    after = (
+        SkillFile(path="SKILL.md", content=SKILL_MD + b"# Demo v2\n"),
+        SkillFile(path="new.txt", content=b"new\n"),
+        SkillFile(path="same.txt", content=b"same\n"),
+        SkillFile(path="run.sh", content=b"#!/bin/sh\n", mode="0755"),
+        SkillFile(path="logo.png", content=b"\x89PNG\x00\x01"),
+    )
+
+    by_path = {diff.path: diff for diff in diff_files(before, after)}
+
+    assert set(by_path) == {"SKILL.md", "new.txt", "old.txt", "run.sh", "logo.png"}
+    assert by_path["new.txt"].change == "added"
+    assert by_path["old.txt"].change == "deleted"
+    assert by_path["SKILL.md"].change == "modified"
+    assert by_path["SKILL.md"].text is not None
+    assert "+# Demo v2" in by_path["SKILL.md"].text
+    assert by_path["run.sh"].change == "modified"
+    assert by_path["run.sh"].text == ""
+    assert by_path["logo.png"].binary is True
+    assert by_path["logo.png"].text is None
+
+
+async def test_diff_between_published_versions() -> None:
+    service, _, _ = build_service()
+    principal = make_principal()
+    await create_demo(service, principal)
+    await service.publish(principal, "demo-skill", semver="1.0.0", changelog="v1")
+    await service.put_file(
+        principal,
+        "demo-skill",
+        path="notes.txt",
+        content=b"hello\n",
+        expected_lock_version=1,
+    )
+    await service.publish(principal, "demo-skill", semver="1.1.0", changelog="v2")
+
+    diff = await service.diff(
+        principal,
+        "demo-skill",
+        from_semver="1.0.0",
+        to_semver="1.1.0",
+    )
+
+    assert diff.slug == "demo-skill"
+    assert diff.from_semver == "1.0.0"
+    assert diff.to_semver == "1.1.0"
+    assert [(item.path, item.change) for item in diff.files] == [("notes.txt", "added")]
+    assert diff.files[0].text is not None
+    assert "+hello" in diff.files[0].text
+
+    with pytest.raises(NotFoundError):
+        await service.diff(principal, "demo-skill", from_semver="9.9.9", to_semver="1.1.0")
+    with pytest.raises(ValidationError):
+        await service.diff(principal, "demo-skill", from_semver="bad", to_semver="1.1.0")
 
 
 async def test_create_and_publish_build_an_immutable_version() -> None:
@@ -537,5 +601,38 @@ async def test_rest_skills_flow() -> None:
             versions = await client.get("/api/v1/skills/demo-skill/versions")
             assert versions.status_code == 200
             assert len(versions.json()) == 1
+
+            added = await client.put(
+                "/api/v1/skills/demo-skill/draft/files/extra.txt",
+                headers={"If-Match": '"2"'},
+                json={"content_b64": base64.b64encode(b"extra\n").decode("ascii")},
+            )
+            assert added.status_code == 200
+            assert added.headers["etag"] == '"3"'
+
+            second = await client.post(
+                "/api/v1/skills/demo-skill/publish",
+                headers={"If-Match": '"3"'},
+                json={"semver": "1.1.0", "changelog": "Second version"},
+            )
+            assert second.status_code == 200
+            assert second.json()["semver"] == "1.1.0"
+
+            diff = await client.get(
+                "/api/v1/skills/demo-skill/diff",
+                params={"from": "1.0.0", "to": "1.1.0"},
+            )
+            assert diff.status_code == 200
+            assert diff.json()["slug"] == "demo-skill"
+            assert [(item["path"], item["change"]) for item in diff.json()["files"]] == [
+                ("extra.txt", "added")
+            ]
+            assert "+extra" in diff.json()["files"][0]["diff"]
+
+            unknown_version = await client.get(
+                "/api/v1/skills/demo-skill/diff",
+                params={"from": "1.0.0", "to": "9.9.9"},
+            )
+            assert unknown_version.status_code == 404
     finally:
         app.dependency_overrides.clear()

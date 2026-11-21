@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
-from workhub.skills.domain.skill import Skill, SkillVersion, StoredFile
+from workhub.skills.domain.skill import FileDiff, Skill, SkillVersion, StoredFile
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,3 +104,46 @@ class CreatedSkillView:
 
     skill: SkillView
     draft: DraftView
+
+
+@dataclass(frozen=True, slots=True)
+class FileDiffView:
+    """Différence d'un fichier entre deux versions."""
+
+    path: str
+    change: str
+    before_sha256: bytes | None
+    after_sha256: bytes | None
+    before_size: int
+    after_size: int
+    before_mode: str | None
+    after_mode: str | None
+    binary: bool
+    text: str | None
+    truncated: bool
+
+    @classmethod
+    def from_diff(cls, diff: FileDiff) -> FileDiffView:
+        return cls(
+            path=diff.path,
+            change=diff.change,
+            before_sha256=diff.before_sha256,
+            after_sha256=diff.after_sha256,
+            before_size=diff.before_size,
+            after_size=diff.after_size,
+            before_mode=diff.before_mode,
+            after_mode=diff.after_mode,
+            binary=diff.binary,
+            text=diff.text,
+            truncated=diff.truncated,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class VersionDiffView:
+    """Comparaison de deux versions publiées."""
+
+    slug: str
+    from_semver: str
+    to_semver: str
+    files: tuple[FileDiffView, ...]

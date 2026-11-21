@@ -252,6 +252,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/skills/{slug}/diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Diff Versions
+         * @description Compare deux versions publiées.
+         */
+        get: operations["diff_versions_api_v1_skills__slug__diff_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/skills/{slug}/draft": {
         parameters: {
             query?: never;
@@ -471,6 +491,34 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+        };
+        /**
+         * FileDiffResponse
+         * @description Différence d'un fichier entre deux versions.
+         */
+        FileDiffResponse: {
+            /** After Mode */
+            after_mode: string | null;
+            /** After Sha256 */
+            after_sha256: string | null;
+            /** After Size */
+            after_size: number;
+            /** Before Mode */
+            before_mode: string | null;
+            /** Before Sha256 */
+            before_sha256: string | null;
+            /** Before Size */
+            before_size: number;
+            /** Binary */
+            binary: boolean;
+            /** Change */
+            change: string;
+            /** Diff */
+            diff: string | null;
+            /** Path */
+            path: string;
+            /** Truncated */
+            truncated: boolean;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -734,6 +782,20 @@ export interface components {
                 [key: string]: unknown;
             };
             version: components["schemas"]["VersionResponse"];
+        };
+        /**
+         * VersionDiffResponse
+         * @description Comparaison de deux versions publiées.
+         */
+        VersionDiffResponse: {
+            /** Files */
+            files: components["schemas"]["FileDiffResponse"][];
+            /** From Semver */
+            from_semver: string;
+            /** Slug */
+            slug: string;
+            /** To Semver */
+            to_semver: string;
         };
         /**
          * VersionResponse
@@ -1839,6 +1901,94 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SkillResponse"];
+                };
+            };
+            /** @description Authentification requise */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Accès refusé */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Ressource introuvable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Méthode non autorisée */
+            405: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Précondition d'écriture invalide */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Erreur interne */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    diff_versions_api_v1_skills__slug__diff_get: {
+        parameters: {
+            query: {
+                from: string;
+                to: string;
+            };
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VersionDiffResponse"];
                 };
             };
             /** @description Authentification requise */

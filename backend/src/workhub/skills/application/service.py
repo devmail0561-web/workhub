@@ -22,8 +22,10 @@ from workhub.skills.application.views import (
     CreatedSkillView,
     DraftFileView,
     DraftView,
+    FileDiffView,
     SkillView,
     VersionDetailView,
+    VersionDiffView,
     VersionView,
 )
 from workhub.skills.domain.skill import (
@@ -35,6 +37,7 @@ from workhub.skills.domain.skill import (
     SkillFile,
     SkillVersion,
     build_manifest,
+    diff_files,
     manifest_sha256,
     normalize_requirements,
     semver_key,
@@ -385,6 +388,45 @@ class SkillService:
             files=tuple(files),
             manifest=version.manifest,
         )
+
+    @require_scope("skills:read")
+    async def diff(
+        self,
+        principal: Principal,
+        slug: str,
+        *,
+        from_semver: str,
+        to_semver: str,
+    ) -> VersionDiffView:
+        """Compare deux versions publiées d'une Skill visible."""
+        skill = await self._visible_skill(principal, slug)
+        source = await self._find_version(skill.id, from_semver)
+        target = await self._find_version(skill.id, to_semver)
+        diffs = diff_files(
+            await self._version_files(source),
+            await self._version_files(target),
+        )
+        return VersionDiffView(
+            slug=skill.slug,
+            from_semver=source.semver,
+            to_semver=target.semver,
+            files=tuple(FileDiffView.from_diff(diff) for diff in diffs),
+        )
+
+    async def _find_version(self, skill_id: UUID, semver: str) -> SkillVersion:
+        version = await self._skills.find_version(skill_id, validate_semver(semver))
+        if version is None:
+            raise NotFoundError("Version introuvable")
+        return version
+
+    async def _version_files(self, version: SkillVersion) -> tuple[SkillFile, ...]:
+        files: list[SkillFile] = []
+        for stored in await self._skills.list_version_files(version.id):
+            content = await self._skills.read_blob(stored.sha256)
+            if content is None:
+                raise RuntimeError(f"Blob introuvable : {stored.path}")
+            files.append(SkillFile(path=stored.path, content=content, mode=stored.mode))
+        return tuple(files)
 
     def _principal_owner_id(self, principal: Principal) -> UUID:
         if principal.type.value == "integration":

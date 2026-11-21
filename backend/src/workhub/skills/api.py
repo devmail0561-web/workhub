@@ -15,8 +15,10 @@ from workhub.skills.application.views import (
     CreatedSkillView,
     DraftFileView,
     DraftView,
+    FileDiffView,
     SkillView,
     VersionDetailView,
+    VersionDiffView,
     VersionView,
 )
 from workhub.skills.domain.skill import SkillFile, StoredFile
@@ -26,12 +28,14 @@ __all__ = [
     "CreatedSkillView",
     "DraftFileView",
     "DraftView",
+    "FileDiffView",
     "Principal",
     "SkillFile",
     "SkillService",
     "SkillView",
     "StoredFile",
     "VersionDetailView",
+    "VersionDiffView",
     "VersionView",
     "get_skill_service",
 ]

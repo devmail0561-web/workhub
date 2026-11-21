@@ -3,10 +3,11 @@
 ## Périmètre livré
 
 Cœur Skills : création d'une Skill et de son brouillon, fichiers adressés par contenu,
-publication immuable, lecture des versions, manifeste canonique et API REST.
+publication immuable, lecture des versions, manifeste canonique, comparaison de versions et
+API REST.
 
-Tâches couvertes : E2-01 → E2-06, E2-12 (partie REST/ownership) et E2-14 (ETag/If-Match).
-Les dépendances entre Skills (E2-11), le cycle de vie (E2-07), le diff (E2-08),
+Tâches couvertes : E2-01 → E2-06, E2-08, E2-12 (partie REST/ownership) et E2-14
+(ETag/If-Match). Les dépendances entre Skills (E2-11), le cycle de vie (E2-07),
 l'export/import (E2-09/E2-10), la recherche (E2-13), l'UI (E2-15/E2-16) et le scan de
 secrets E2-03 restent à livrer.
 
@@ -42,21 +43,34 @@ Le manifeste contient `manifest_version`, `name`, `description`, `slug`, `semver
   `tool_version_id`.
 - Le hash est `SHA-256` du JSON canonique UTF-8, clés triées, sans espace insignifiant.
 
+## Comparaison de versions
+
+`GET /api/v1/skills/{slug}/diff?from={semver}&to={semver}` compare deux versions publiées
+visibles par le principal :
+
+- les fichiers sont appariés par chemin et classés `added`, `modified` ou `deleted` ;
+- un changement de contenu **ou de mode** marque le fichier comme modifié ;
+- les fichiers texte produisent un diff unifié (`--- a/...`, `+++ b/...`) tronqué à
+  200 000 caractères (`truncated=true`) ;
+- les contenus binaires (octet nul ou UTF-8 invalide) sont signalés par `binary=true` sans
+  diff textuel ;
+- une version inconnue renvoie `404`, un SemVer invalide `422`.
+
 ## Limites connues
 
 - `dependencies` est présent mais vide : l'API de dépendances entre Skills n'est pas encore
   livrée.
-- Le scan de secrets, le diff, l'export/import, la recherche, l'UI et MCP restent hors de ce
-  lot.
+- Le cycle de vie complet (Draft/Review/Published/Deprecated/Archived), le scan de secrets,
+  l'export/import, la recherche, l'UI et MCP restent hors de ce lot.
 - Les tests d'intégration Skills ajoutés n'ont pas pu être exécutés localement faute de daemon
   Docker ; ils sont destinés au job CI avec PostgreSQL.
 
 ## Vérifications
 
-- `uv run pytest -m "not integration" -q` : 129 tests, couverture 84,93 %.
+- `uv run pytest -m "not integration" -q` : 133 tests, couverture 84,97 %.
 - `uv run ruff check .` et `uv run ruff format --check .` : verts.
 - `uv run pyright` : 0 erreur.
 - `uv run lint-imports` : 6 contrats conservés.
-- `frontend/openapi.json` : 17 chemins, dont les 7 routes Skills ; snapshot et types régénérés.
+- `frontend/openapi.json` : 18 chemins, dont les 8 routes Skills ; snapshot et types régénérés.
 - `pnpm run typecheck`, `pnpm test`, `pnpm run build` : verts.
 - Tests d'intégration Skills : ajoutés, non exécutés localement (Docker indisponible).

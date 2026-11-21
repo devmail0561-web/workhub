@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 import json
 import re
 from collections.abc import Iterable, Mapping
@@ -29,6 +30,7 @@ MAX_FILE_BYTES = 5 * 1024 * 1024
 MAX_VERSION_BYTES = 50 * 1024 * 1024
 MAX_FILES = 500
 MAX_CHANGELOG_LENGTH = 10_000
+MAX_DIFF_CHARS = 200_000
 
 SemVerKey = tuple[int, int, int, int, tuple[tuple[int, int, str], ...]]
 _REQUIREMENT_FIELDS = frozenset(
@@ -124,6 +126,23 @@ class StoredFile:
     sha256: bytes
     size: int
     mode: str
+
+
+@dataclass(frozen=True, slots=True)
+class FileDiff:
+    """Différence entre deux versions d'un même chemin."""
+
+    path: str
+    change: str
+    before_sha256: bytes | None
+    after_sha256: bytes | None
+    before_size: int
+    after_size: int
+    before_mode: str | None
+    after_mode: str | None
+    binary: bool
+    text: str | None
+    truncated: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -366,6 +385,79 @@ def manifest_sha256(manifest: dict[str, object]) -> bytes:
     """Calcule l'empreinte du manifeste canonique (JSON trié, UTF-8)."""
     payload = _canonical_json(manifest).encode("utf-8")
     return sha256(payload).digest()
+
+
+def diff_files(
+    before: tuple[SkillFile, ...],
+    after: tuple[SkillFile, ...],
+) -> tuple[FileDiff, ...]:
+    """Compare deux ensembles de fichiers et produit des diffs unifiés."""
+    before_by_path = {file.path: file for file in before}
+    after_by_path = {file.path: file for file in after}
+    diffs: list[FileDiff] = []
+    for path in sorted(before_by_path.keys() | after_by_path.keys()):
+        old = before_by_path.get(path)
+        new = after_by_path.get(path)
+        if old is None and new is None:
+            continue
+        if old is None:
+            change = "added"
+        elif new is None:
+            change = "deleted"
+        elif old.sha256 == new.sha256 and old.mode == new.mode:
+            continue
+        else:
+            change = "modified"
+        text, binary, truncated = _render_text_diff(path, old, new)
+        diffs.append(
+            FileDiff(
+                path=path,
+                change=change,
+                before_sha256=old.sha256 if old is not None else None,
+                after_sha256=new.sha256 if new is not None else None,
+                before_size=old.size if old is not None else 0,
+                after_size=new.size if new is not None else 0,
+                before_mode=old.mode if old is not None else None,
+                after_mode=new.mode if new is not None else None,
+                binary=binary,
+                text=text,
+                truncated=truncated,
+            )
+        )
+    return tuple(diffs)
+
+
+def _render_text_diff(
+    path: str,
+    old: SkillFile | None,
+    new: SkillFile | None,
+) -> tuple[str | None, bool, bool]:
+    old_text = _decode_text(old.content) if old is not None else ""
+    new_text = _decode_text(new.content) if new is not None else ""
+    if old_text is None or new_text is None:
+        return None, True, False
+    lines = list(
+        difflib.unified_diff(
+            old_text.splitlines(),
+            new_text.splitlines(),
+            fromfile=f"a/{path}" if old is not None else "/dev/null",
+            tofile=f"b/{path}" if new is not None else "/dev/null",
+            lineterm="",
+        )
+    )
+    text = "\n".join(lines)
+    if len(text) > MAX_DIFF_CHARS:
+        return text[:MAX_DIFF_CHARS], False, True
+    return text, False, False
+
+
+def _decode_text(content: bytes) -> str | None:
+    if b"\x00" in content:
+        return None
+    try:
+        return content.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
 
 
 def semver_key(value: str) -> SemVerKey:
