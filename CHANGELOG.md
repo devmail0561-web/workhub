@@ -29,6 +29,22 @@ développement : la version `0.1.0` correspond à l'amorçage, sans release publ
 - **Résolution unifiée du `Principal` (E1-05)** : `/api/v1/auth/principal` accepte un JWT de
   session ou un jeton d'intégration, décorateur `require_scope` côté application, scope `*`
   temporaire pour l'administrateur et refus des scopes de gestion pour les intégrations.
+- **Cœur Skills (E2-01 → E2-06, E2-12, E2-14 partiel)** : domaine des fichiers et versions,
+  manifeste canonique versionné (`manifest_version`, nom, description, dépendances et
+  requirements triés), blobs SHA-256, brouillons, publication immuable, API REST
+  `/api/v1/skills/*`, audit des écritures et tests unitaires/REST.
+- **Concurrence des brouillons (E2-14/ADR 009)** : `ETag` fort basé sur `lock_version`,
+  `If-Match` obligatoire sur les écritures et publication, incrément conditionnel en SQL et
+  réponse `412` en cas de conflit.
+- **Ownership et provenance des intégrations (E2-12)** : une Skill créée par une intégration
+  appartient à l'utilisateur propriétaire de l'intégration ; l'origine de version est
+  persistée (`origin_kind`/`origin_integration_id`) et exposée au client.
+- **Lecture du référentiel publié** : les principals avec `skills:read` peuvent lire les
+  Skills publiées dont ils ne sont pas propriétaires ; les brouillons restent privés.
+- **Scopes humains par défaut** : les utilisateurs non-admin reçoivent `skills:read`,
+  `skills:propose` et `skills:publish` ; l'administrateur conserve `*`.
+- **Requirements complets** : support de `hashes` et `tool_version_id`, validation des formes
+  `package|system|service|script` avant insertion, tri canonique et hash stable.
 - **Durcissement base de données** : rôles `workhub_owner` (migrations) et `workhub_app`
   (runtime, sans DDL ni `TRUNCATE`), scripts `deploy/postgres/bootstrap.sh` et
   `permissions.sh`, services Compose `db-bootstrap` et `db-grants`.
@@ -116,6 +132,17 @@ développement : la version `0.1.0` correspond à l'amorçage, sans release publ
   et réussite de connexion ne remet à zéro que le compteur du compte, pas celui de l'IP.
 - **Audit des intégrations (E1-08)** : créations/révocations d'intégrations et de jetons
   journalisées avec `request_id`, sans jeton brut.
+- **Skills et intégrations** : une intégration ne peut plus créer une Skill avec l'ID
+  d'intégration comme propriétaire (faux 409), une intégration `skills:read` lit désormais les
+  versions publiées, et l'origine n'est plus forcée à `app`.
+- **Concurrence Skills** : les mises à jour de brouillon ne sont plus « dernier écrit gagne » ;
+  `lock_version` est incrémenté et les publications concurrentes renvoient `412`/`409`.
+- **Manifeste Skills** : ajout des champs ADR 003 manquants, normalisation du mode (`755` →
+  `0755`), tri des requirements et validation stricte des SemVer, chemins et requirements.
+- **Contrat Skills** : `frontend/openapi.json` et `src/api/schema.d.ts` régénérés avec les sept
+  routes Skills, les headers `If-Match` et les métadonnées d'origine.
+- **Proxy Skills** : `client_max_body_size` passe de `1m` à `70m` pour couvrir une version de
+  50 Mo encodée en base64.
 - **`TRUNCATE audit_log`** : l'append-only est désormais protégé aussi au niveau statement ;
   `workhub_app` n'a pas le privilège et le trigger rejette l'opération côté owner.
 - **FK sans index** : 21 index ajoutés pour éviter les parcours séquentiels lors des

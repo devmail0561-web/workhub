@@ -15,7 +15,7 @@ Historique de l'implémentation, epic par epic et tâche par tâche. Chaque page
 |---|---|---|---|
 | **E0** — Fondations | M0 | [E0-fondations.md](E0-fondations.md) | E0-01 → E0-11 terminés |
 | E1 — IAM | M0 → M2 | [E1-iam.md](E1-iam.md) | E1-01 → E1-05 terminés ; E1-06 → E1-07 à venir |
-| E2 — Skills / blobs | M1 | — | à venir |
+| E2 — Skills / blobs | M1 | [E2-skills.md](E2-skills.md) | cœur Skills livré ; E2-07 → E2-11, E2-13, E2-15 → E2-16 à venir |
 | E3 — Projets / missions | M3 | — | à venir |
 | E4 — Plans de travail | M4 | — | à venir |
 | E5 — Compétences | M5 | — | à venir |

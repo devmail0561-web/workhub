@@ -17,6 +17,7 @@ from sqlalchemy import (
     Uuid,
     delete,
     func,
+    or_,
     select,
     update,
 )
@@ -192,12 +193,16 @@ class SqlAlchemySkillRepository:
         ).scalar_one_or_none()
         return None if row is None else _to_skill(row)
 
-    async def list_for_owner(self, owner_id: UUID) -> list[Skill]:
-        result = await self._session.execute(
-            select(SkillRow)
-            .where(SkillRow.owner_id == owner_id, SkillRow.archived_at.is_(None))
-            .order_by(SkillRow.created_at.desc())
-        )
+    async def list_visible(self, owner_id: UUID, *, include_all: bool) -> list[Skill]:
+        statement = select(SkillRow).where(SkillRow.archived_at.is_(None))
+        if not include_all:
+            statement = statement.where(
+                or_(
+                    SkillRow.owner_id == owner_id,
+                    SkillRow.status_logical.in_(("published", "deprecated")),
+                )
+            )
+        result = await self._session.execute(statement.order_by(SkillRow.created_at.desc()))
         return [_to_skill(row) for row in result.scalars()]
 
     async def add_skill(self, skill: Skill) -> None:
@@ -243,22 +248,47 @@ class SqlAlchemySkillRepository:
         ).scalar_one_or_none()
         return None if row is None else _to_draft(row)
 
-    async def touch_draft(self, draft_id: UUID, updated_at: datetime) -> None:
-        await self._session.execute(
-            update(SkillDraftRow).where(SkillDraftRow.id == draft_id).values(updated_at=updated_at)
+    async def touch_draft(
+        self,
+        draft_id: UUID,
+        expected_lock_version: int,
+        updated_at: datetime,
+    ) -> bool:
+        result = await self._session.execute(
+            update(SkillDraftRow)
+            .where(
+                SkillDraftRow.id == draft_id,
+                SkillDraftRow.lock_version == expected_lock_version,
+            )
+            .values(
+                updated_at=updated_at,
+                lock_version=SkillDraftRow.lock_version + 1,
+            )
+            .returning(SkillDraftRow.id)
         )
+        return result.scalar_one_or_none() is not None
 
     async def update_draft_base(
         self,
         draft_id: UUID,
         version_id: UUID,
+        expected_lock_version: int,
         updated_at: datetime,
-    ) -> None:
-        await self._session.execute(
+    ) -> bool:
+        result = await self._session.execute(
             update(SkillDraftRow)
-            .where(SkillDraftRow.id == draft_id)
-            .values(base_version_id=version_id, updated_at=updated_at)
+            .where(
+                SkillDraftRow.id == draft_id,
+                SkillDraftRow.lock_version == expected_lock_version,
+            )
+            .values(
+                base_version_id=version_id,
+                updated_at=updated_at,
+                lock_version=SkillDraftRow.lock_version + 1,
+            )
+            .returning(SkillDraftRow.id)
         )
+        return result.scalar_one_or_none() is not None
 
     async def store_blob(self, content: bytes) -> bytes:
         digest = sha256(content).digest()
@@ -333,41 +363,46 @@ class SqlAlchemySkillRepository:
                 status=version.status,
                 changelog=version.changelog,
                 author_principal_id=version.author_principal_id,
-                origin_kind="app",
-                origin_integration_id=None,
+                origin_kind=version.origin_kind,
+                origin_integration_id=version.origin_integration_id,
                 created_at=version.created_at,
                 published_at=version.published_at,
             )
         )
-        await self._session.flush()
-        for file in files:
-            self._session.add(
-                SkillVersionFileRow(
-                    version_id=version.id,
-                    path=file.path,
-                    blob_sha256=file.sha256,
-                    size=file.size,
-                    mode=file.mode,
+        try:
+            await self._session.flush()
+            for file in files:
+                self._session.add(
+                    SkillVersionFileRow(
+                        version_id=version.id,
+                        path=file.path,
+                        blob_sha256=file.sha256,
+                        size=file.size,
+                        mode=file.mode,
+                    )
                 )
-            )
-        for requirement in requirements:
-            self._session.add(
-                SkillRequirementRow(
-                    id=uuid4(),
-                    skill_version_id=version.id,
-                    kind=str(requirement["kind"]),
-                    ecosystem=_optional_str(requirement.get("ecosystem")),
-                    name=_optional_str(requirement.get("name")),
-                    version_constraint=_optional_str(requirement.get("version_constraint")),
-                    pinned_version=_optional_str(requirement.get("pinned_version")),
-                    hashes=_optional_dict(requirement.get("hashes")),
-                    check_command=_optional_str(requirement.get("check_command")),
-                    tool_version_id=_optional_uuid(requirement.get("tool_version_id")),
-                    usage=str(requirement.get("usage", "required")),
-                    note=_optional_str(requirement.get("note")),
+            for requirement in requirements:
+                self._session.add(
+                    SkillRequirementRow(
+                        id=uuid4(),
+                        skill_version_id=version.id,
+                        kind=str(requirement["kind"]),
+                        ecosystem=_optional_str(requirement.get("ecosystem")),
+                        name=_optional_str(requirement.get("name")),
+                        version_constraint=_optional_str(requirement.get("version_constraint")),
+                        pinned_version=_optional_str(requirement.get("pinned_version")),
+                        hashes=_optional_dict(requirement.get("hashes")),
+                        check_command=_optional_str(requirement.get("check_command")),
+                        tool_version_id=_optional_uuid(requirement.get("tool_version_id")),
+                        usage=str(requirement.get("usage", "required")),
+                        note=_optional_str(requirement.get("note")),
+                    )
                 )
-            )
-        await self._session.flush()
+            await self._session.flush()
+        except IntegrityError as exc:
+            raise ConflictError(
+                f"La version {version.semver!r} entre en conflit avec l'état existant"
+            ) from exc
 
     async def list_versions(self, skill_id: UUID) -> list[SkillVersion]:
         result = await self._session.execute(

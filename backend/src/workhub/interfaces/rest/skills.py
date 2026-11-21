@@ -4,16 +4,17 @@ from __future__ import annotations
 
 import base64
 import binascii
+import re
 from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, Header, Request, Response, status
 from pydantic import BaseModel, Field
 
 from workhub.interfaces.rest.dependencies import current_principal
 from workhub.interfaces.rest.middleware import get_request_id
-from workhub.shared.api import Principal, ValidationError
+from workhub.shared.api import PreconditionFailedError, Principal, ValidationError
 from workhub.skills.api import (
     CreatedSkillView,
     DraftFileView,
@@ -28,6 +29,23 @@ from workhub.skills.api import (
 )
 
 router = APIRouter(prefix="/api/v1/skills", tags=["skills"])
+_ETAG_PATTERN = re.compile(r'^"([0-9]+)"$')
+
+
+def _parse_if_match(if_match: str | None) -> int | None:
+    if if_match is None:
+        raise PreconditionFailedError("En-tête If-Match requis")
+    normalized = if_match.strip()
+    if normalized == "*":
+        return None
+    match = _ETAG_PATTERN.fullmatch(normalized)
+    if match is None:
+        raise PreconditionFailedError("ETag invalide dans If-Match")
+    return int(match.group(1))
+
+
+def _set_etag(response: Response, lock_version: int) -> None:
+    response.headers["ETag"] = f'"{lock_version}"'
 
 
 class SkillFileRequest(BaseModel):
@@ -62,7 +80,9 @@ class RequirementRequest(BaseModel):
     name: str | None = Field(default=None, max_length=200)
     version_constraint: str | None = Field(default=None, max_length=200)
     pinned_version: str | None = Field(default=None, max_length=100)
+    hashes: dict[str, str] | None = None
     check_command: str | None = Field(default=None, max_length=500)
+    tool_version_id: UUID | None = None
     usage: str = Field(default="required", pattern=r"^(required|optional)$")
     note: str | None = Field(default=None, max_length=1000)
 
@@ -70,7 +90,7 @@ class RequirementRequest(BaseModel):
         """Convertit l'entrée en dictionnaire compatible manifeste."""
         return {
             key: value
-            for key, value in self.model_dump(exclude_none=True).items()
+            for key, value in self.model_dump(mode="json", exclude_none=True).items()
             if value is not None
         }
 
@@ -80,7 +100,7 @@ class PublishRequest(BaseModel):
 
     semver: str = Field(min_length=1, max_length=100)
     changelog: str = Field(min_length=1, max_length=10_000)
-    requirements: list[RequirementRequest] | None = None
+    requirements: list[RequirementRequest] | None = Field(default=None, max_length=100)
 
 
 class SkillResponse(BaseModel):
@@ -166,6 +186,8 @@ class VersionResponse(BaseModel):
     changelog: str
     manifest_sha256: str
     parent_semver: str | None
+    origin_kind: str
+    origin_integration_id: UUID | None
     created_at: datetime
     published_at: datetime
 
@@ -178,6 +200,8 @@ class VersionResponse(BaseModel):
             changelog=version.changelog,
             manifest_sha256=version.manifest_sha256.hex(),
             parent_semver=version.parent_semver,
+            origin_kind=version.origin_kind,
+            origin_integration_id=version.origin_integration_id,
             created_at=version.created_at,
             published_at=version.published_at,
         )
@@ -231,6 +255,7 @@ def _decode_content(content_b64: str) -> bytes:
 async def create_skill(
     payload: CreateSkillRequest,
     request: Request,
+    response: Response,
     principal: Annotated[Principal, Depends(current_principal)],
     service: Annotated[SkillService, Depends(get_skill_service)],
 ) -> CreatedSkillResponse:
@@ -243,6 +268,7 @@ async def create_skill(
         files=tuple(_decode_file(file) for file in payload.files),
         request_id=get_request_id(request),
     )
+    _set_etag(response, created.draft.lock_version)
     return CreatedSkillResponse.from_view(created)
 
 
@@ -268,11 +294,14 @@ async def get_skill(
 @router.get("/{slug}/draft", response_model=DraftResponse)
 async def get_draft(
     slug: str,
+    response: Response,
     principal: Annotated[Principal, Depends(current_principal)],
     service: Annotated[SkillService, Depends(get_skill_service)],
 ) -> DraftResponse:
     """Retourne le brouillon courant."""
-    return DraftResponse.from_view(await service.get_draft(principal, slug))
+    draft = await service.get_draft(principal, slug)
+    _set_etag(response, draft.lock_version)
+    return DraftResponse.from_view(draft)
 
 
 @router.put("/{slug}/draft/files/{path:path}", response_model=DraftResponse)
@@ -281,8 +310,10 @@ async def put_draft_file(
     path: str,
     payload: PutFileRequest,
     request: Request,
+    response: Response,
     principal: Annotated[Principal, Depends(current_principal)],
     service: Annotated[SkillService, Depends(get_skill_service)],
+    if_match: Annotated[str | None, Header(alias="If-Match")] = None,
 ) -> DraftResponse:
     """Crée ou remplace un fichier du brouillon."""
     draft = await service.put_file(
@@ -291,8 +322,10 @@ async def put_draft_file(
         path=path,
         content=_decode_content(payload.content_b64),
         mode=payload.mode,
+        expected_lock_version=_parse_if_match(if_match),
         request_id=get_request_id(request),
     )
+    _set_etag(response, draft.lock_version)
     return DraftResponse.from_view(draft)
 
 
@@ -301,16 +334,20 @@ async def delete_draft_file(
     slug: str,
     path: str,
     request: Request,
+    response: Response,
     principal: Annotated[Principal, Depends(current_principal)],
     service: Annotated[SkillService, Depends(get_skill_service)],
+    if_match: Annotated[str | None, Header(alias="If-Match")] = None,
 ) -> DraftResponse:
     """Supprime un fichier du brouillon."""
     draft = await service.delete_file(
         principal,
         slug,
         path=path,
+        expected_lock_version=_parse_if_match(if_match),
         request_id=get_request_id(request),
     )
+    _set_etag(response, draft.lock_version)
     return DraftResponse.from_view(draft)
 
 
@@ -321,6 +358,7 @@ async def publish_skill(
     request: Request,
     principal: Annotated[Principal, Depends(current_principal)],
     service: Annotated[SkillService, Depends(get_skill_service)],
+    if_match: Annotated[str | None, Header(alias="If-Match")] = None,
 ) -> VersionResponse:
     """Publie une nouvelle version immuable."""
     version = await service.publish(
@@ -331,6 +369,7 @@ async def publish_skill(
         requirements=tuple(
             requirement.to_payload() for requirement in (payload.requirements or ())
         ),
+        expected_lock_version=_parse_if_match(if_match),
         request_id=get_request_id(request),
     )
     return VersionResponse.from_view(version)

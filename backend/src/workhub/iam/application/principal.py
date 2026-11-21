@@ -53,6 +53,7 @@ class PrincipalResolver:
                 type=PrincipalType.INTEGRATION,
                 display_name=identity.integration.name,
                 scopes=identity.token.scopes,
+                owner_user_id=identity.integration.owner_id,
             )
 
         user_id = self._token_issuer.decode_access_token(credential)

@@ -2,19 +2,24 @@ from __future__ import annotations
 
 import base64
 from collections.abc import AsyncIterator
+from typing import cast
+from uuid import uuid4
 
 import httpx
 import pytest
 from tests.unit.iam.fakes import FakeAuditRecorder, FakeClock, FakeCommit, make_principal
 from tests.unit.skills.fakes import FakeSkillRepository
 
+import workhub.skills.application.service as skills_service_module
 from workhub.interfaces.rest.app import app
 from workhub.interfaces.rest.dependencies import current_principal
 from workhub.shared.api import (
     ConflictError,
     NotFoundError,
     PermissionDeniedError,
+    PreconditionFailedError,
     Principal,
+    PrincipalType,
     ValidationError,
 )
 from workhub.skills.api import SkillService, get_skill_service
@@ -22,8 +27,10 @@ from workhub.skills.domain.skill import (
     SkillFile,
     build_manifest,
     manifest_sha256,
+    normalize_requirements,
     semver_key,
     validate_files,
+    validate_mode,
     validate_path,
     validate_semver,
 )
@@ -55,48 +62,106 @@ async def create_demo(service: SkillService, principal: Principal | None = None)
 def test_manifest_is_deterministic_and_depends_on_content() -> None:
     first = SkillFile(path="b.txt", content=b"b")
     second = SkillFile(path="a.txt", content=b"a")
-    manifest = build_manifest(slug="demo", semver="1.0.0", parent=None, files=(first, second))
-    reversed_manifest = build_manifest(
-        slug="demo",
+    skill_md = SkillFile(path="SKILL.md", content=SKILL_MD)
+    manifest = build_manifest(
+        slug="demo-skill",
+        name="demo-skill",
+        description="Demo skill",
         semver="1.0.0",
         parent=None,
-        files=(second, first),
+        files=(first, second, skill_md),
+    )
+    reversed_manifest = build_manifest(
+        slug="demo-skill",
+        name="demo-skill",
+        description="Demo skill",
+        semver="1.0.0",
+        parent=None,
+        files=(skill_md, second, first),
     )
 
+    assert manifest["manifest_version"] == 1
+    assert manifest["name"] == "demo-skill"
+    assert manifest["description"] == "Demo skill"
     assert manifest["files"] == reversed_manifest["files"]
     assert manifest_sha256(manifest) == manifest_sha256(reversed_manifest)
     changed = build_manifest(
-        slug="demo",
+        slug="demo-skill",
+        name="demo-skill",
+        description="Demo skill",
         semver="1.0.0",
         parent=None,
-        files=(SkillFile(path="a.txt", content=b"changed"), second),
+        files=(SkillFile(path="a.txt", content=b"changed"), second, skill_md),
     )
     assert manifest_sha256(changed) != manifest_sha256(manifest)
 
 
-def test_manifest_includes_requirements() -> None:
+def test_manifest_includes_canonical_requirements() -> None:
     requirement: dict[str, object] = {
         "kind": "package",
         "ecosystem": "pypi",
         "name": "python-nmap",
     }
+    other: dict[str, object] = {
+        "kind": "system",
+        "name": "nmap",
+        "usage": "optional",
+    }
     manifest = build_manifest(
-        slug="demo",
+        slug="demo-skill",
+        name="demo-skill",
+        description="Demo skill",
         semver="1.0.0",
         parent=None,
         files=(SkillFile(path="SKILL.md", content=SKILL_MD),),
-        requirements=(requirement,),
+        requirements=(other, requirement),
     )
-    assert manifest["requirements"] == [requirement]
+    assert manifest["requirements"] == [
+        {**requirement, "usage": "required"},
+        other,
+    ]
+    reversed_manifest = build_manifest(
+        slug="demo-skill",
+        name="demo-skill",
+        description="Demo skill",
+        semver="1.0.0",
+        parent=None,
+        files=(SkillFile(path="SKILL.md", content=SKILL_MD),),
+        requirements=(requirement, other),
+    )
+    assert manifest_sha256(manifest) == manifest_sha256(reversed_manifest)
+
+
+def test_requirements_are_validated_and_hashes_are_supported() -> None:
+    requirement = normalize_requirements(
+        (
+            {
+                "kind": "script",
+                "tool_version_id": str(uuid4()),
+                "hashes": {"sha256": "abc"},
+            },
+        )
+    )
+    assert requirement[0]["kind"] == "script"
+    assert requirement[0]["hashes"] == {"sha256": "abc"}
+    with pytest.raises(ValidationError):
+        normalize_requirements(({"kind": "bogus"},))
+    with pytest.raises(ValidationError):
+        normalize_requirements(({"kind": "package", "name": "x"},))
+    with pytest.raises(ValidationError):
+        normalize_requirements(({"kind": "system"},))
 
 
 def test_file_and_frontmatter_validation_rejects_unsafe_input() -> None:
+    for path in ("../secret", "/absolute", ".", "./SKILL.md", "a//b", "a\x00b", "a/../b"):
+        with pytest.raises(ValidationError):
+            validate_path(path)
+    for semver in ("1.0", "1.0.0-.", "1.0.0-alpha..1", "1.0.0-01"):
+        with pytest.raises(ValidationError):
+            validate_semver(semver)
+    assert validate_mode("755") == "0755"
     with pytest.raises(ValidationError):
-        validate_path("../secret")
-    with pytest.raises(ValidationError):
-        validate_path("/absolute")
-    with pytest.raises(ValidationError):
-        validate_semver("1.0")
+        validate_mode("888")
     with pytest.raises(ValidationError):
         validate_files((SkillFile(path="README.md", content=b"x"),), slug="demo")
     with pytest.raises(ValidationError):
@@ -115,6 +180,9 @@ def test_semver_ordering() -> None:
     assert semver_key("1.0.0") < semver_key("1.1.0")
     assert semver_key("1.0.0-alpha") < semver_key("1.0.0")
     assert semver_key("2.0.0") > semver_key("1.99.99")
+    assert semver_key("1.0.0-2") < semver_key("1.0.0-10")
+    assert semver_key("1.0.0-alpha.2") < semver_key("1.0.0-alpha.10")
+    assert semver_key("1.0.0-alpha.10") < semver_key("1.0.0-alpha.beta")
 
 
 async def test_create_and_publish_build_an_immutable_version() -> None:
@@ -144,11 +212,55 @@ async def test_create_and_publish_build_an_immutable_version() -> None:
     assert version.parent_semver is None
     assert repository.skills[created.skill.id].status == "published"
     assert repository.requirements[version.id][0]["name"] == "python-nmap"
+    assert version.origin_kind == "app"
+    assert version.origin_integration_id is None
     assert [entry.action for entry in audit.entries] == ["skill.create", "skill.publish"]
 
     detail = await service.get_version(principal, "demo-skill", "1.0.0")
     assert detail.files[0].path == "SKILL.md"
     assert detail.manifest["slug"] == "demo-skill"
+    assert detail.manifest["name"] == "demo-skill"
+    assert detail.manifest["description"] == "Demo skill"
+    assert detail.manifest["manifest_version"] == 1
+
+
+async def test_publish_accepts_script_requirements_and_rejects_invalid_ones() -> None:
+    service, _, _ = build_service()
+    principal = make_principal()
+    await create_demo(service, principal)
+
+    version = await service.publish(
+        principal,
+        "demo-skill",
+        semver="1.0.0",
+        changelog="v1",
+        requirements=(
+            {
+                "kind": "script",
+                "tool_version_id": str(uuid4()),
+                "hashes": {"sha256": "abc"},
+            },
+        ),
+    )
+    detail = await service.get_version(principal, "demo-skill", "1.0.0")
+    requirements = cast("list[object]", detail.manifest["requirements"])
+    assert isinstance(requirements, list)
+    requirement = requirements[0]
+    assert isinstance(requirement, dict)
+    assert requirement["kind"] == "script"
+    assert requirement["usage"] == "required"
+    assert requirement["hashes"] == {"sha256": "abc"}
+    assert requirement["tool_version_id"]
+    assert version.origin_kind == "app"
+
+    with pytest.raises(ValidationError):
+        await service.publish(
+            principal,
+            "demo-skill",
+            semver="1.0.1",
+            changelog="invalid",
+            requirements=({"kind": "bogus"},),
+        )
 
 
 async def test_publish_requires_a_strictly_increasing_version() -> None:
@@ -192,15 +304,32 @@ async def test_draft_file_crud_and_ownership() -> None:
         "demo-skill",
         path="notes/readme.md",
         content=b"notes",
+        expected_lock_version=0,
         request_id="req-put",
     )
+    assert updated.lock_version == 1
     assert {file.path for file in updated.files} == {"SKILL.md", "notes/readme.md"}
     assert await repository.read_blob(updated.files[1].sha256) == b"notes"
 
-    removed = await service.delete_file(owner, "demo-skill", path="notes/readme.md")
+    with pytest.raises(PreconditionFailedError):
+        await service.put_file(
+            owner,
+            "demo-skill",
+            path="notes/readme.md",
+            content=b"stale",
+            expected_lock_version=0,
+        )
+
+    removed = await service.delete_file(
+        owner,
+        "demo-skill",
+        path="notes/readme.md",
+        expected_lock_version=1,
+    )
+    assert removed.lock_version == 2
     assert [file.path for file in removed.files] == ["SKILL.md"]
     with pytest.raises(ValidationError):
-        await service.delete_file(owner, "demo-skill", path="SKILL.md")
+        await service.delete_file(owner, "demo-skill", path="SKILL.md", expected_lock_version=2)
     with pytest.raises(NotFoundError):
         await service.get(other, "demo-skill")
     with pytest.raises(NotFoundError):
@@ -228,6 +357,101 @@ async def test_permissions_are_checked_by_the_application_layer() -> None:
         await service.publish(proposer, "demo-skill", semver="1.0.0", changelog="x")
 
 
+async def test_integration_creates_for_owner_and_records_origin() -> None:
+    service, repository, _ = build_service()
+    owner = make_principal()
+    integration = Principal(
+        id=uuid4(),
+        type=PrincipalType.INTEGRATION,
+        display_name="OpenCode",
+        scopes=frozenset({"skills:read", "skills:propose", "skills:publish"}),
+        owner_user_id=owner.id,
+    )
+
+    created = await service.create(
+        integration,
+        slug="demo-skill",
+        domain="security",
+        files=(SkillFile(path="SKILL.md", content=SKILL_MD),),
+    )
+    assert repository.skills[created.skill.id].owner_id == owner.id
+
+    version = await service.publish(
+        integration,
+        "demo-skill",
+        semver="1.0.0",
+        changelog="Initial version",
+    )
+    assert version.origin_kind == "integration"
+    assert version.origin_integration_id == integration.id
+
+
+async def test_put_file_enforces_total_draft_size(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, _, _ = build_service()
+    principal = make_principal()
+    await create_demo(service, principal)
+    monkeypatch.setattr(skills_service_module, "MAX_VERSION_BYTES", len(SKILL_MD))
+
+    with pytest.raises(ValidationError):
+        await service.put_file(
+            principal,
+            "demo-skill",
+            path="notes.txt",
+            content=b"x",
+            expected_lock_version=0,
+        )
+
+
+async def test_published_skills_are_readable_by_other_integrations_but_drafts_are_not() -> None:
+    service, _, _ = build_service()
+    owner = make_principal()
+    reader = Principal(
+        id=uuid4(),
+        type=PrincipalType.INTEGRATION,
+        display_name="Reader",
+        scopes=frozenset({"skills:read"}),
+        owner_user_id=uuid4(),
+    )
+    await create_demo(service, owner)
+
+    with pytest.raises(NotFoundError):
+        await service.get(reader, "demo-skill")
+
+    await service.publish(owner, "demo-skill", semver="1.0.0", changelog="v1")
+
+    assert (await service.get(reader, "demo-skill")).slug == "demo-skill"
+    assert len(await service.list_versions(reader, "demo-skill")) == 1
+    detail = await service.get_version(reader, "demo-skill", "1.0.0")
+    assert detail.manifest["slug"] == "demo-skill"
+    assert [skill.slug for skill in await service.list(reader)] == ["demo-skill"]
+    with pytest.raises(NotFoundError):
+        await service.get_draft(reader, "demo-skill")
+
+
+async def test_publish_requires_matching_draft_version() -> None:
+    service, _, _ = build_service()
+    principal = make_principal()
+    await create_demo(service, principal)
+
+    await service.publish(
+        principal,
+        "demo-skill",
+        semver="1.0.0",
+        changelog="v1",
+        expected_lock_version=0,
+    )
+    with pytest.raises(PreconditionFailedError):
+        await service.publish(
+            principal,
+            "demo-skill",
+            semver="1.0.1",
+            changelog="stale",
+            expected_lock_version=0,
+        )
+
+
 async def test_rest_skills_flow() -> None:
     service, _, _ = build_service()
     principal = make_principal()
@@ -249,25 +473,66 @@ async def test_rest_skills_flow() -> None:
                         {
                             "path": "SKILL.md",
                             "content_b64": base64.b64encode(SKILL_MD).decode("ascii"),
+                            "mode": "755",
                         }
                     ],
                 },
             )
             assert created.status_code == 201
+            assert created.headers["etag"] == '"0"'
             assert created.json()["skill"]["slug"] == "demo-skill"
 
             draft = await client.get("/api/v1/skills/demo-skill/draft")
             assert draft.status_code == 200
+            assert draft.headers["etag"] == '"0"'
             assert draft.json()["files"][0]["content_b64"] == base64.b64encode(SKILL_MD).decode(
                 "ascii"
             )
+            assert draft.json()["files"][0]["mode"] == "0755"
+
+            updated = await client.put(
+                "/api/v1/skills/demo-skill/draft/files/notes.txt",
+                headers={"If-Match": '"0"'},
+                json={"content_b64": base64.b64encode(b"notes").decode("ascii")},
+            )
+            assert updated.status_code == 200
+            assert updated.headers["etag"] == '"1"'
+
+            stale_put = await client.put(
+                "/api/v1/skills/demo-skill/draft/files/notes.txt",
+                headers={"If-Match": '"0"'},
+                json={"content_b64": base64.b64encode(b"stale").decode("ascii")},
+            )
+            assert stale_put.status_code == 412
+
+            invalid_etag = await client.put(
+                "/api/v1/skills/demo-skill/draft/files/notes.txt",
+                headers={"If-Match": "not-an-etag"},
+                json={"content_b64": base64.b64encode(b"bad").decode("ascii")},
+            )
+            assert invalid_etag.status_code == 412
+
+            missing_precondition = await client.post(
+                "/api/v1/skills/demo-skill/publish",
+                json={"semver": "1.0.0", "changelog": "Initial version"},
+            )
+            assert missing_precondition.status_code == 412
 
             published = await client.post(
                 "/api/v1/skills/demo-skill/publish",
+                headers={"If-Match": '"1"'},
                 json={"semver": "1.0.0", "changelog": "Initial version"},
             )
             assert published.status_code == 200
             assert published.json()["semver"] == "1.0.0"
+            assert published.json()["origin_kind"] == "app"
+
+            stale = await client.post(
+                "/api/v1/skills/demo-skill/publish",
+                headers={"If-Match": '"1"'},
+                json={"semver": "1.0.1", "changelog": "stale"},
+            )
+            assert stale.status_code == 412
 
             versions = await client.get("/api/v1/skills/demo-skill/versions")
             assert versions.status_code == 200

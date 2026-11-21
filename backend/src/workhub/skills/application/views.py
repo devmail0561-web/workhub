@@ -63,6 +63,8 @@ class VersionView:
     changelog: str
     manifest_sha256: bytes
     parent_semver: str | None
+    origin_kind: str
+    origin_integration_id: UUID | None
     created_at: datetime
     published_at: datetime
 
@@ -80,6 +82,8 @@ class VersionView:
             changelog=version.changelog,
             manifest_sha256=version.manifest_sha256,
             parent_semver=parent_semver,
+            origin_kind=version.origin_kind,
+            origin_integration_id=version.origin_integration_id,
             created_at=version.created_at,
             published_at=version.published_at,
         )

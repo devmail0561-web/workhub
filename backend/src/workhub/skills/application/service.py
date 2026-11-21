@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from uuid import UUID
+
 from workhub.audit.api import AuditEntry, AuditRecorder
 from workhub.shared.api import (
     Clock,
     ConflictError,
     IdFactory,
     NotFoundError,
+    PermissionDeniedError,
+    PreconditionFailedError,
     Principal,
     ValidationError,
     new_id,
@@ -23,13 +27,18 @@ from workhub.skills.application.views import (
     VersionView,
 )
 from workhub.skills.domain.skill import (
+    MAX_FILE_BYTES,
+    MAX_FILES,
+    MAX_VERSION_BYTES,
     Skill,
     SkillDraft,
     SkillFile,
     SkillVersion,
     build_manifest,
     manifest_sha256,
+    normalize_requirements,
     semver_key,
+    skill_metadata,
     validate_changelog,
     validate_domain,
     validate_files,
@@ -80,7 +89,7 @@ class SkillService:
         skill = Skill(
             id=self._id_factory(),
             slug=normalized_slug,
-            owner_id=principal.id,
+            owner_id=self._principal_owner_id(principal),
             domain=normalized_domain,
             status="draft",
             tags=tags,
@@ -113,15 +122,18 @@ class SkillService:
 
     @require_scope("skills:read")
     async def list(self, principal: Principal) -> list[SkillView]:
-        """Liste les Skills dont le principal est propriétaire."""
-        return [
-            SkillView.from_skill(skill) for skill in await self._skills.list_for_owner(principal.id)
-        ]
+        """Liste les Skills visibles : les siennes et toutes les versions publiées."""
+        owner_id = principal.owner_user_id or principal.id
+        skills = await self._skills.list_visible(
+            owner_id,
+            include_all=principal.has_scope("*"),
+        )
+        return [SkillView.from_skill(skill) for skill in skills]
 
     @require_scope("skills:read")
     async def get(self, principal: Principal, slug: str) -> SkillView:
         """Retourne une Skill visible par le principal."""
-        skill = await self._owned_skill(principal, slug)
+        skill = await self._visible_skill(principal, slug)
         return SkillView.from_skill(skill)
 
     @require_scope("skills:read")
@@ -142,17 +154,32 @@ class SkillService:
         path: str,
         content: bytes,
         mode: str = "0644",
+        expected_lock_version: int | None = None,
         request_id: str | None = None,
     ) -> DraftView:
-        """Crée ou remplace un fichier du brouillon."""
+        """Crée ou remplace un fichier du brouillon sous précondition ETag."""
         skill = await self._owned_skill(principal, slug)
         draft = await self._skills.find_draft(skill.id)
         if draft is None:
             raise NotFoundError("Brouillon introuvable")
         normalized_path = validate_path(path)
         normalized_mode = validate_mode(mode)
-        if len(content) > 5 * 1024 * 1024:
-            raise ValidationError("Le fichier dépasse la limite de 5 Mo")
+        if len(content) > MAX_FILE_BYTES:
+            raise ValidationError(f"Le fichier dépasse la limite de {MAX_FILE_BYTES} octets")
+
+        stored_files = await self._skills.list_draft_files(draft.id)
+        existing = next((item for item in stored_files if item.path == normalized_path), None)
+        total = sum(item.size for item in stored_files if item.path != normalized_path)
+        total += len(content)
+        if total > MAX_VERSION_BYTES:
+            raise ValidationError(f"Un brouillon ne peut pas dépasser {MAX_VERSION_BYTES} octets")
+        if existing is None and len(stored_files) >= MAX_FILES:
+            raise ValidationError(f"Un brouillon ne peut pas contenir plus de {MAX_FILES} fichiers")
+
+        expected = draft.lock_version if expected_lock_version is None else expected_lock_version
+        now = self._clock.now()
+        if not await self._skills.touch_draft(draft.id, expected, now):
+            raise PreconditionFailedError("Le brouillon a été modifié entre-temps")
         blob_sha256 = await self._skills.store_blob(content)
         await self._skills.put_draft_file(
             draft.id,
@@ -160,14 +187,12 @@ class SkillService:
             blob_sha256,
             normalized_mode,
         )
-        now = self._clock.now()
-        await self._skills.touch_draft(draft.id, now)
         updated = SkillDraft(
             id=draft.id,
             skill_id=draft.skill_id,
             base_version_id=draft.base_version_id,
             updated_at=now,
-            lock_version=draft.lock_version,
+            lock_version=expected + 1,
         )
         await self._record(
             principal,
@@ -186,9 +211,10 @@ class SkillService:
         slug: str,
         *,
         path: str,
+        expected_lock_version: int | None = None,
         request_id: str | None = None,
     ) -> DraftView:
-        """Supprime un fichier du brouillon."""
+        """Supprime un fichier du brouillon sous précondition ETag."""
         skill = await self._owned_skill(principal, slug)
         draft = await self._skills.find_draft(skill.id)
         if draft is None:
@@ -196,15 +222,17 @@ class SkillService:
         normalized_path = validate_path(path)
         if normalized_path == "SKILL.md":
             raise ValidationError("SKILL.md ne peut pas être supprimé du brouillon")
-        await self._skills.delete_draft_file(draft.id, normalized_path)
+        expected = draft.lock_version if expected_lock_version is None else expected_lock_version
         now = self._clock.now()
-        await self._skills.touch_draft(draft.id, now)
+        if not await self._skills.touch_draft(draft.id, expected, now):
+            raise PreconditionFailedError("Le brouillon a été modifié entre-temps")
+        await self._skills.delete_draft_file(draft.id, normalized_path)
         updated = SkillDraft(
             id=draft.id,
             skill_id=draft.skill_id,
             base_version_id=draft.base_version_id,
             updated_at=now,
-            lock_version=draft.lock_version,
+            lock_version=expected + 1,
         )
         await self._record(
             principal,
@@ -225,6 +253,7 @@ class SkillService:
         semver: str,
         changelog: str,
         requirements: tuple[dict[str, object], ...] = (),
+        expected_lock_version: int | None = None,
         request_id: str | None = None,
     ) -> VersionView:
         """Publie le brouillon courant comme nouvelle version immuable."""
@@ -234,6 +263,7 @@ class SkillService:
             raise NotFoundError("Brouillon introuvable")
         normalized_semver = validate_semver(semver)
         normalized_changelog = validate_changelog(changelog)
+        normalized_requirements = normalize_requirements(requirements)
         stored_files = await self._skills.list_draft_files(draft.id)
         if not stored_files:
             raise ValidationError("Le brouillon est vide")
@@ -244,6 +274,7 @@ class SkillService:
                 raise RuntimeError(f"Blob introuvable : {stored.path}")
             files.append(SkillFile(path=stored.path, content=content, mode=stored.mode))
         normalized_files = validate_files(tuple(files), slug=skill.slug)
+        metadata = skill_metadata(normalized_files, slug=skill.slug)
 
         versions = await self._skills.list_versions(skill.id)
         if versions:
@@ -258,12 +289,18 @@ class SkillService:
 
         manifest = build_manifest(
             slug=skill.slug,
+            name=metadata.name,
+            description=metadata.description,
             semver=normalized_semver,
             parent=parent.semver if parent is not None else None,
             files=normalized_files,
-            requirements=requirements,
+            requirements=normalized_requirements,
         )
         now = self._clock.now()
+        expected = draft.lock_version if expected_lock_version is None else expected_lock_version
+        if expected != draft.lock_version:
+            raise PreconditionFailedError("Le brouillon a été modifié entre-temps")
+        origin_kind = "integration" if principal.type.value == "integration" else "app"
         version = SkillVersion(
             id=self._id_factory(),
             skill_id=skill.id,
@@ -276,10 +313,13 @@ class SkillService:
             author_principal_id=principal.id,
             created_at=now,
             published_at=now,
+            origin_kind=origin_kind,
+            origin_integration_id=(principal.id if origin_kind == "integration" else None),
         )
-        await self._skills.add_version(version, normalized_files, requirements)
+        await self._skills.add_version(version, normalized_files, normalized_requirements)
+        if not await self._skills.update_draft_base(draft.id, version.id, expected, now):
+            raise PreconditionFailedError("Le brouillon a été modifié entre-temps")
         await self._skills.update_skill_status(skill.id, "published")
-        await self._skills.update_draft_base(draft.id, version.id, now)
         await self._record(
             principal,
             action="skill.publish",
@@ -299,8 +339,8 @@ class SkillService:
 
     @require_scope("skills:read")
     async def list_versions(self, principal: Principal, slug: str) -> list[VersionView]:
-        """Liste les versions publiées d'une Skill."""
-        skill = await self._owned_skill(principal, slug)
+        """Liste les versions publiées d'une Skill visible."""
+        skill = await self._visible_skill(principal, slug)
         versions = await self._skills.list_versions(skill.id)
         by_id = {version.id: version.semver for version in versions}
         return [
@@ -323,7 +363,7 @@ class SkillService:
         semver: str,
     ) -> VersionDetailView:
         """Retourne une version publiée et ses métadonnées de fichiers."""
-        skill = await self._owned_skill(principal, slug)
+        skill = await self._visible_skill(principal, slug)
         normalized_semver = validate_semver(semver)
         version = await self._skills.find_version(skill.id, normalized_semver)
         if version is None:
@@ -346,11 +386,32 @@ class SkillService:
             manifest=version.manifest,
         )
 
+    def _principal_owner_id(self, principal: Principal) -> UUID:
+        if principal.type.value == "integration":
+            if principal.owner_user_id is None:
+                raise PermissionDeniedError(
+                    "L'intégration ne possède pas de propriétaire utilisateur"
+                )
+            return principal.owner_user_id
+        return principal.owner_user_id or principal.id
+
     async def _owned_skill(self, principal: Principal, slug: str) -> Skill:
         skill = await self._skills.find_by_slug(validate_slug(slug))
-        if skill is None or (skill.owner_id != principal.id and not principal.has_scope("*")):
+        owner_id = self._principal_owner_id(principal)
+        if skill is None or (skill.owner_id != owner_id and not principal.has_scope("*")):
             raise NotFoundError("Skill introuvable")
         return skill
+
+    async def _visible_skill(self, principal: Principal, slug: str) -> Skill:
+        skill = await self._skills.find_by_slug(validate_slug(slug))
+        if skill is None:
+            raise NotFoundError("Skill introuvable")
+        owner_id = principal.owner_user_id or principal.id
+        if skill.owner_id == owner_id or principal.has_scope("*"):
+            return skill
+        if skill.status in {"published", "deprecated"}:
+            return skill
+        raise NotFoundError("Skill introuvable")
 
     async def _draft_view(self, skill: Skill, draft: SkillDraft) -> DraftView:
         files: list[DraftFileView] = []

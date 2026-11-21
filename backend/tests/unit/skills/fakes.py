@@ -31,8 +31,14 @@ class FakeSkillRepository:
     async def find_by_slug(self, slug: str) -> Skill | None:
         return next((skill for skill in self.skills.values() if skill.slug == slug), None)
 
-    async def list_for_owner(self, owner_id: UUID) -> list[Skill]:
-        return [skill for skill in self.skills.values() if skill.owner_id == owner_id]
+    async def list_visible(self, owner_id: UUID, *, include_all: bool) -> list[Skill]:
+        if include_all:
+            return list(self.skills.values())
+        return [
+            skill
+            for skill in self.skills.values()
+            if skill.owner_id == owner_id or skill.status in {"published", "deprecated"}
+        ]
 
     async def add_skill(self, skill: Skill) -> None:
         self.skills[skill.id] = skill
@@ -46,24 +52,43 @@ class FakeSkillRepository:
     async def find_draft(self, skill_id: UUID) -> SkillDraft | None:
         return self.drafts.get(skill_id)
 
-    async def touch_draft(self, draft_id: UUID, updated_at: datetime) -> None:
+    async def touch_draft(
+        self,
+        draft_id: UUID,
+        expected_lock_version: int,
+        updated_at: datetime,
+    ) -> bool:
         for skill_id, draft in list(self.drafts.items()):
             if draft.id == draft_id:
-                self.drafts[skill_id] = replace(draft, updated_at=updated_at)
+                if draft.lock_version != expected_lock_version:
+                    return False
+                self.drafts[skill_id] = replace(
+                    draft,
+                    updated_at=updated_at,
+                    lock_version=draft.lock_version + 1,
+                )
+                return True
+        return False
 
     async def update_draft_base(
         self,
         draft_id: UUID,
         version_id: UUID,
+        expected_lock_version: int,
         updated_at: datetime,
-    ) -> None:
+    ) -> bool:
         for skill_id, draft in list(self.drafts.items()):
             if draft.id == draft_id:
+                if draft.lock_version != expected_lock_version:
+                    return False
                 self.drafts[skill_id] = replace(
                     draft,
                     base_version_id=version_id,
                     updated_at=updated_at,
+                    lock_version=draft.lock_version + 1,
                 )
+                return True
+        return False
 
     async def store_blob(self, content: bytes) -> bytes:
         digest = sha256(content).digest()

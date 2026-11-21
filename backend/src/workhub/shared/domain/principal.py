@@ -35,6 +35,7 @@ class Principal:
     type: PrincipalType
     display_name: str | None = None
     scopes: frozenset[str] = frozenset()
+    owner_user_id: UUID | None = None
 
     @classmethod
     def system(cls, name: str = "system") -> Principal:

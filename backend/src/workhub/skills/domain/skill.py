@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import re
-from dataclasses import dataclass
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, replace
 from datetime import datetime
 from hashlib import sha256
+from typing import cast
 from uuid import UUID
 
 from workhub.shared.api import ValidationError
@@ -13,14 +16,43 @@ from workhub.shared.api import ValidationError
 SLUG_PATTERN = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 SEMVER_PATTERN = re.compile(
     r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
-    r"(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$"
+    r"(?:-((?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
+    r"(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?"
+    r"(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
 )
-MODE_PATTERN = re.compile(r"^[0-7]{3,4}$")
+MODE_PATTERN = re.compile(r"^[0-7]{4}$")
+REQUIREMENT_KINDS = frozenset({"package", "system", "service", "script"})
+REQUIREMENT_USAGES = frozenset({"required", "optional"})
+MANIFEST_VERSION = 1
 
 MAX_FILE_BYTES = 5 * 1024 * 1024
 MAX_VERSION_BYTES = 50 * 1024 * 1024
 MAX_FILES = 500
 MAX_CHANGELOG_LENGTH = 10_000
+
+SemVerKey = tuple[int, int, int, int, tuple[tuple[int, int, str], ...]]
+_REQUIREMENT_FIELDS = frozenset(
+    {
+        "kind",
+        "ecosystem",
+        "name",
+        "version_constraint",
+        "pinned_version",
+        "hashes",
+        "check_command",
+        "tool_version_id",
+        "usage",
+        "note",
+    }
+)
+_REQUIREMENT_TEXT_FIELDS = (
+    "ecosystem",
+    "name",
+    "version_constraint",
+    "pinned_version",
+    "check_command",
+    "note",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +112,8 @@ class SkillVersion:
     author_principal_id: UUID
     created_at: datetime
     published_at: datetime
+    origin_kind: str = "app"
+    origin_integration_id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +124,14 @@ class StoredFile:
     sha256: bytes
     size: int
     mode: str
+
+
+@dataclass(frozen=True, slots=True)
+class SkillMetadata:
+    """Métadonnées minimales lues dans le frontmatter de SKILL.md."""
+
+    name: str
+    description: str
 
 
 def validate_slug(slug: str) -> str:
@@ -103,7 +145,7 @@ def validate_slug(slug: str) -> str:
 
 
 def validate_semver(semver: str) -> str:
-    """Valide et retourne une version SemVer."""
+    """Valide et retourne une version SemVer stricte."""
     normalized = semver.strip()
     if not SEMVER_PATTERN.fullmatch(normalized):
         raise ValidationError(f"Version SemVer invalide : {semver!r}")
@@ -129,24 +171,29 @@ def validate_domain(domain: str) -> str:
 
 
 def validate_path(path: str) -> str:
-    """Valide un chemin relatif portable, sans traversée."""
+    """Valide un chemin relatif portable, sans segment ambigu."""
+    parts = path.split("/")
     if (
         not path
         or len(path) > 1024
         or path.startswith("/")
         or "\\" in path
-        or ".." in path.split("/")
         or path.endswith("/")
+        or any(ord(character) < 32 or ord(character) == 127 for character in path)
+        or any(part in {"", ".", ".."} for part in parts)
     ):
         raise ValidationError(f"Chemin de fichier invalide : {path!r}")
     return path
 
 
 def validate_mode(mode: str) -> str:
-    """Valide un mode de fichier Unix minimal."""
-    if not MODE_PATTERN.fullmatch(mode):
+    """Valide et normalise un mode de fichier Unix sur quatre chiffres."""
+    normalized = mode.strip()
+    if len(normalized) == 3:
+        normalized = f"0{normalized}"
+    if not MODE_PATTERN.fullmatch(normalized):
         raise ValidationError(f"Mode de fichier invalide : {mode!r}")
-    return mode
+    return normalized
 
 
 def validate_files(files: tuple[SkillFile, ...], *, slug: str) -> tuple[SkillFile, ...]:
@@ -158,17 +205,19 @@ def validate_files(files: tuple[SkillFile, ...], *, slug: str) -> tuple[SkillFil
 
     seen: set[str] = set()
     total = 0
+    normalized_files: list[SkillFile] = []
     for file in files:
-        validate_path(file.path)
-        validate_mode(file.mode)
-        if file.path in seen:
-            raise ValidationError(f"Chemin dupliqué : {file.path}")
-        seen.add(file.path)
+        normalized_path = validate_path(file.path)
+        normalized_mode = validate_mode(file.mode)
+        if normalized_path in seen:
+            raise ValidationError(f"Chemin dupliqué : {normalized_path}")
+        seen.add(normalized_path)
         if file.size > MAX_FILE_BYTES:
             raise ValidationError(
-                f"Le fichier {file.path} dépasse la limite de {MAX_FILE_BYTES} octets"
+                f"Le fichier {normalized_path} dépasse la limite de {MAX_FILE_BYTES} octets"
             )
         total += file.size
+        normalized_files.append(replace(file, path=normalized_path, mode=normalized_mode))
     if total > MAX_VERSION_BYTES:
         raise ValidationError(
             f"Une version de Skill ne peut pas dépasser {MAX_VERSION_BYTES} octets"
@@ -176,12 +225,21 @@ def validate_files(files: tuple[SkillFile, ...], *, slug: str) -> tuple[SkillFil
     if "SKILL.md" not in seen:
         raise ValidationError("SKILL.md est obligatoire")
 
-    skill_md = next(file for file in files if file.path == "SKILL.md")
-    _validate_skill_md(skill_md.content, slug)
-    return tuple(sorted(files, key=lambda item: item.path))
+    normalized_tuple = tuple(sorted(normalized_files, key=lambda item: item.path))
+    skill_metadata(normalized_tuple, slug=slug)
+    return normalized_tuple
 
 
-def _validate_skill_md(content: bytes, slug: str) -> None:
+def skill_metadata(files: Iterable[SkillFile], *, slug: str) -> SkillMetadata:
+    """Extrait et valide le frontmatter de SKILL.md."""
+    skill_md = next((file for file in files if file.path == "SKILL.md"), None)
+    if skill_md is None:
+        raise ValidationError("SKILL.md est obligatoire")
+    return parse_skill_md(skill_md.content, slug=slug)
+
+
+def parse_skill_md(content: bytes, *, slug: str) -> SkillMetadata:
+    """Valide le frontmatter YAML minimal et retourne ses métadonnées."""
     try:
         text = content.decode("utf-8")
     except UnicodeDecodeError as exc:
@@ -195,26 +253,86 @@ def _validate_skill_md(content: bytes, slug: str) -> None:
         end = lines.index("---", 1)
     except ValueError as exc:
         raise ValidationError("Frontmatter SKILL.md non fermé") from exc
-    frontmatter = lines[1:end]
     fields: dict[str, str] = {}
-    for line in frontmatter:
+    for line in lines[1:end]:
         if ":" not in line or line.lstrip().startswith("#"):
             continue
         key, value = line.split(":", 1)
         fields[key.strip()] = value.strip().strip("\"'")
-    if fields.get("name") != slug:
+    name = fields.get("name", "")
+    description = fields.get("description", "")
+    if name != slug:
         raise ValidationError("Le champ name de SKILL.md doit être égal au slug")
-    if not fields.get("description"):
+    if not description:
         raise ValidationError("Le champ description de SKILL.md est obligatoire")
+    return SkillMetadata(name=name, description=description)
+
+
+def normalize_requirements(
+    requirements: Iterable[Mapping[str, object]],
+) -> tuple[dict[str, object], ...]:
+    """Valide, normalise et trie les exigences du manifeste."""
+    normalized: list[dict[str, object]] = []
+    for raw in requirements:
+        unknown = set(raw) - _REQUIREMENT_FIELDS
+        if unknown:
+            raise ValidationError(
+                "Champ d'exigence inconnu : " + ", ".join(sorted(str(item) for item in unknown))
+            )
+        kind = _required_text(raw.get("kind"), "kind")
+        if kind not in REQUIREMENT_KINDS:
+            raise ValidationError(f"Type d'exigence invalide : {kind!r}")
+        usage = _optional_text(raw.get("usage")) or "required"
+        if usage not in REQUIREMENT_USAGES:
+            raise ValidationError(f"Usage d'exigence invalide : {usage!r}")
+
+        item: dict[str, object] = {"kind": kind, "usage": usage}
+        for field in _REQUIREMENT_TEXT_FIELDS:
+            value = _optional_text(raw.get(field))
+            if value is not None:
+                item[field] = value
+
+        hashes = _normalize_hashes(raw.get("hashes"))
+        if hashes:
+            item["hashes"] = hashes
+        tool_version_id = _normalize_uuid(raw.get("tool_version_id"), "tool_version_id")
+        if tool_version_id is not None:
+            item["tool_version_id"] = tool_version_id
+
+        if kind == "package":
+            if "ecosystem" not in item or "name" not in item:
+                raise ValidationError("Une exigence package requiert ecosystem et name")
+            if tool_version_id is not None:
+                raise ValidationError("Une exigence package ne peut pas cibler tool_version_id")
+        elif kind == "script":
+            if tool_version_id is None:
+                raise ValidationError("Une exigence script requiert tool_version_id")
+            if "name" in item:
+                raise ValidationError("Une exigence script ne peut pas définir name")
+        else:
+            if "name" not in item:
+                raise ValidationError(f"Une exigence {kind} requiert name")
+            if tool_version_id is not None:
+                raise ValidationError(f"Une exigence {kind} ne peut pas cibler tool_version_id")
+
+        normalized.append(item)
+
+    unique: dict[str, dict[str, object]] = {}
+    for item in normalized:
+        unique[_canonical_json(item)] = item
+    return tuple(unique[key] for key in sorted(unique))
 
 
 def build_manifest(
     *,
     slug: str,
+    name: str,
+    description: str,
     semver: str,
     parent: str | None,
     files: tuple[SkillFile, ...],
-    requirements: tuple[dict[str, object], ...] = (),
+    requirements: tuple[Mapping[str, object], ...] = (),
+    dependencies: tuple[Mapping[str, object], ...] = (),
 ) -> dict[str, object]:
     """Construit le manifeste canonique d'une version."""
     entries = [
@@ -222,35 +340,36 @@ def build_manifest(
             "path": file.path,
             "sha256": file.sha256.hex(),
             "size": file.size,
-            "mode": file.mode,
+            "mode": validate_mode(file.mode),
         }
         for file in sorted(files, key=lambda item: item.path)
     ]
+    normalized_requirements = normalize_requirements(requirements)
+    normalized_dependencies = sorted(
+        (dict(dependency) for dependency in dependencies),
+        key=_canonical_json,
+    )
     return {
+        "manifest_version": MANIFEST_VERSION,
+        "name": name,
         "slug": slug,
+        "description": description,
         "semver": semver,
         "parent": parent,
         "files": entries,
-        "dependencies": [],
-        "requirements": list(requirements),
+        "dependencies": normalized_dependencies,
+        "requirements": list(normalized_requirements),
     }
 
 
 def manifest_sha256(manifest: dict[str, object]) -> bytes:
     """Calcule l'empreinte du manifeste canonique (JSON trié, UTF-8)."""
-    import json
-
-    payload = json.dumps(
-        manifest,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
+    payload = _canonical_json(manifest).encode("utf-8")
     return sha256(payload).digest()
 
 
-def semver_key(value: str) -> tuple[int, int, int, int, tuple[str, ...]]:
-    """Clé de comparaison SemVer suffisante pour les publications WorkHub."""
+def semver_key(value: str) -> SemVerKey:
+    """Clé de comparaison SemVer conforme à la précédence des préreleases."""
     match = SEMVER_PATTERN.fullmatch(value)
     if match is None:
         raise ValidationError(f"Version SemVer invalide : {value!r}")
@@ -258,5 +377,60 @@ def semver_key(value: str) -> tuple[int, int, int, int, tuple[str, ...]]:
     prerelease = match.group(4)
     if prerelease is None:
         return (major, minor, patch, 1, ())
-    identifiers = tuple(part for part in prerelease[1:].split(".") if part)
+    identifiers = tuple(
+        (0, int(part), "") if part.isdigit() else (1, 0, part) for part in prerelease.split(".")
+    )
     return (major, minor, patch, 0, identifiers)
+
+
+def _canonical_json(value: object) -> str:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+
+
+def _required_text(value: object, field: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValidationError(f"Le champ {field} est obligatoire")
+    return value.strip()
+
+
+def _optional_text(value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValidationError("Une valeur textuelle d'exigence est invalide")
+    normalized = value.strip()
+    return normalized or None
+
+
+def _normalize_hashes(value: object) -> dict[str, str] | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise ValidationError("Le champ hashes doit être un objet")
+    normalized: dict[str, str] = {}
+    for key, item in cast("Mapping[object, object]", value).items():
+        if not isinstance(key, str) or not key.strip() or not isinstance(item, str):
+            raise ValidationError("Le champ hashes doit contenir des couples texte/texte")
+        if not item.strip():
+            raise ValidationError("Une valeur de hash ne peut pas être vide")
+        normalized[key.strip()] = item.strip()
+    return normalized or None
+
+
+def _normalize_uuid(value: object, field: str) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, UUID):
+        return str(value)
+    if not isinstance(value, str):
+        raise ValidationError(f"Le champ {field} doit être un UUID")
+    try:
+        return str(UUID(value))
+    except ValueError as exc:
+        raise ValidationError(f"Le champ {field} doit être un UUID") from exc

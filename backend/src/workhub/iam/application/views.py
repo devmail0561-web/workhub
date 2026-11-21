@@ -33,13 +33,17 @@ class UserView:
         )
 
     def to_principal(self) -> Principal:
-        """Convertit le compte en Principal ; un administrateur est encore tout-puissant."""
-        scopes = frozenset({"*"}) if self.is_admin else frozenset[str]()
+        """Convertit le compte en Principal avec les droits humains par défaut."""
+        if self.is_admin:
+            scopes = frozenset({"*"})
+        else:
+            scopes = frozenset({"skills:read", "skills:propose", "skills:publish"})
         return Principal(
             id=self.id,
             type=PrincipalType.USER,
             display_name=self.display_name,
             scopes=scopes,
+            owner_user_id=self.id,
         )
 
 

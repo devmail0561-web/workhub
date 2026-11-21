@@ -20,7 +20,7 @@ Depuis `backend/` :
 | Commande | Rôle | Attendu |
 |---|---|---|
 | `uv run pytest` | tests + couverture (seuil 80 % global) | tous verts, seuil atteint |
-| `uv run pytest -m integration` | tests sur PostgreSQL réel (testcontainers) | 15 tests verts, Docker requis |
+| `uv run pytest -m integration` | tests sur PostgreSQL réel (testcontainers) | tests verts, Docker requis |
 | `uv run alembic upgrade head` | applique les migrations (`DATABASE_URL` prioritaire) | `0006_integrations (head)` |
 | `uv run ruff check .` | lint | `All checks passed!` |
 | `uv run ruff format --check .` | format | aucun fichier à reformater |

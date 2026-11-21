@@ -199,7 +199,9 @@ def test_user_view_maps_admins_to_the_wildcard_scope() -> None:
     user = make_user()
     assert UserView.from_user(user).to_principal().scopes == frozenset({"*"})
     non_admin = make_user(is_admin=False)
-    assert UserView.from_user(non_admin).to_principal().scopes == frozenset()
+    assert UserView.from_user(non_admin).to_principal().scopes == frozenset(
+        {"skills:read", "skills:propose", "skills:publish"}
+    )
 
 
 async def test_writes_are_audited_without_secrets() -> None:

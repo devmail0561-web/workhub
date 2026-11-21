@@ -49,6 +49,7 @@ ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     403: {"model": ApiErrorResponse, "description": "Accès refusé"},
     404: {"model": ApiErrorResponse, "description": "Ressource introuvable"},
     405: {"model": ApiErrorResponse, "description": "Méthode non autorisée"},
+    412: {"model": ApiErrorResponse, "description": "Précondition d'écriture invalide"},
     500: {"model": ApiErrorResponse, "description": "Erreur interne"},
 }
 
