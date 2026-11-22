@@ -48,6 +48,10 @@ développement : la version `0.1.0` correspond à l'amorçage, sans release publ
 - **Diff de versions (E2-08)** : `GET /api/v1/skills/{slug}/diff?from=&to=` compare deux
   versions publiées, classe les fichiers ajoutés/modifiés/supprimés, produit des diffs
   unifiés texte tronqués à 200 000 caractères et signale les contenus binaires.
+- **Historique des versions** : `GET /api/v1/skills/{slug}/history` expose un journal type
+  `git log` (du plus récent au plus ancien) avec parent, auteur, changelog, origine,
+  empreinte et statistiques de changements ; les versions précédentes restent publiées et
+  lisibles, sans archivage.
 - **Durcissement base de données** : rôles `workhub_owner` (migrations) et `workhub_app`
   (runtime, sans DDL ni `TRUNCATE`), scripts `deploy/postgres/bootstrap.sh` et
   `permissions.sh`, services Compose `db-bootstrap` et `db-grants`.

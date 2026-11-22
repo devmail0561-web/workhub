@@ -19,13 +19,16 @@ from workhub.skills.application.views import (
     SkillView,
     VersionDetailView,
     VersionDiffView,
+    VersionHistoryView,
+    VersionLogEntryView,
     VersionView,
 )
-from workhub.skills.domain.skill import SkillFile, StoredFile
+from workhub.skills.domain.skill import DiffStats, SkillFile, StoredFile
 from workhub.skills.infrastructure.repositories import SqlAlchemySkillRepository
 
 __all__ = [
     "CreatedSkillView",
+    "DiffStats",
     "DraftFileView",
     "DraftView",
     "FileDiffView",
@@ -36,6 +39,8 @@ __all__ = [
     "StoredFile",
     "VersionDetailView",
     "VersionDiffView",
+    "VersionHistoryView",
+    "VersionLogEntryView",
     "VersionView",
     "get_skill_service",
 ]

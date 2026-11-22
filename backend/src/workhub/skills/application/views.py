@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
-from workhub.skills.domain.skill import FileDiff, Skill, SkillVersion, StoredFile
+from workhub.skills.domain.skill import DiffStats, FileDiff, Skill, SkillVersion, StoredFile
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,3 +147,30 @@ class VersionDiffView:
     from_semver: str
     to_semver: str
     files: tuple[FileDiffView, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class VersionLogEntryView:
+    """Entrée d'historique d'une version, à la manière d'un commit Git."""
+
+    id: UUID
+    semver: str
+    parent_semver: str | None
+    status: str
+    changelog: str
+    author_principal_id: UUID
+    manifest_sha256: bytes
+    origin_kind: str
+    origin_integration_id: UUID | None
+    created_at: datetime
+    published_at: datetime
+    changes: DiffStats
+
+
+@dataclass(frozen=True, slots=True)
+class VersionHistoryView:
+    """Historique complet d'une Skill, du plus récent au plus ancien."""
+
+    slug: str
+    head: str | None
+    versions: tuple[VersionLogEntryView, ...]

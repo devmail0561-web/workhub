@@ -30,6 +30,7 @@ from workhub.skills.domain.skill import (
     manifest_sha256,
     normalize_requirements,
     semver_key,
+    summarize_diff,
     validate_files,
     validate_mode,
     validate_path,
@@ -247,6 +248,55 @@ async def test_diff_between_published_versions() -> None:
         await service.diff(principal, "demo-skill", from_semver="9.9.9", to_semver="1.1.0")
     with pytest.raises(ValidationError):
         await service.diff(principal, "demo-skill", from_semver="bad", to_semver="1.1.0")
+
+
+def test_diff_stats_summarize_a_change_like_git_log() -> None:
+    before = (SkillFile(path="a.txt", content=b"one\ntwo\n"),)
+    after = (
+        SkillFile(path="a.txt", content=b"one\nthree\n"),
+        SkillFile(path="b.txt", content=b"new\n"),
+    )
+
+    stats = summarize_diff(diff_files(before, after))
+
+    assert stats.files_added == 1
+    assert stats.files_modified == 1
+    assert stats.files_deleted == 0
+    assert stats.insertions == 2
+    assert stats.deletions == 1
+
+
+async def test_version_history_keeps_previous_versions_readable() -> None:
+    service, _, _ = build_service()
+    principal = make_principal()
+    await create_demo(service, principal)
+    await service.publish(principal, "demo-skill", semver="1.0.0", changelog="Initial")
+    await service.put_file(
+        principal,
+        "demo-skill",
+        path="notes.txt",
+        content=b"hello\n",
+        expected_lock_version=1,
+    )
+    await service.publish(principal, "demo-skill", semver="1.1.0", changelog="Add notes")
+
+    history = await service.history(principal, "demo-skill")
+
+    assert history.slug == "demo-skill"
+    assert history.head == "1.1.0"
+    assert [entry.semver for entry in history.versions] == ["1.1.0", "1.0.0"]
+    latest, first = history.versions
+    assert latest.parent_semver == "1.0.0"
+    assert latest.changelog == "Add notes"
+    assert latest.changes.files_added == 1
+    assert latest.changes.files_modified == 0
+    assert latest.changes.insertions == 1
+    assert first.parent_semver is None
+    assert first.changes.files_added == 1
+
+    previous = await service.get_version(principal, "demo-skill", "1.0.0")
+    assert previous.version.status == "published"
+    assert previous.version.semver == "1.0.0"
 
 
 async def test_create_and_publish_build_an_immutable_version() -> None:
@@ -634,5 +684,24 @@ async def test_rest_skills_flow() -> None:
                 params={"from": "1.0.0", "to": "9.9.9"},
             )
             assert unknown_version.status_code == 404
+
+            history = await client.get("/api/v1/skills/demo-skill/history")
+            assert history.status_code == 200
+            assert history.json()["slug"] == "demo-skill"
+            assert history.json()["head"] == "1.1.0"
+            assert [entry["semver"] for entry in history.json()["versions"]] == [
+                "1.1.0",
+                "1.0.0",
+            ]
+            latest, first = history.json()["versions"]
+            assert latest["parent_semver"] == "1.0.0"
+            assert latest["changelog"] == "Second version"
+            assert latest["changes"]["files_added"] == 1
+            assert latest["changes"]["insertions"] == 1
+            assert first["parent_semver"] is None
+
+            previous = await client.get("/api/v1/skills/demo-skill/versions/1.0.0")
+            assert previous.status_code == 200
+            assert previous.json()["version"]["status"] == "published"
     finally:
         app.dependency_overrides.clear()

@@ -316,6 +316,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/skills/{slug}/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Version History
+         * @description Retrace l'historique des versions, du plus récent au plus ancien.
+         */
+        get: operations["get_version_history_api_v1_skills__slug__history_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/skills/{slug}/publish": {
         parameters: {
             query?: never;
@@ -459,6 +479,22 @@ export interface components {
         CreatedSkillResponse: {
             draft: components["schemas"]["DraftResponse"];
             skill: components["schemas"]["SkillResponse"];
+        };
+        /**
+         * DiffStatsResponse
+         * @description Statistiques agrégées d'un changement de version.
+         */
+        DiffStatsResponse: {
+            /** Deletions */
+            deletions: number;
+            /** Files Added */
+            files_added: number;
+            /** Files Deleted */
+            files_deleted: number;
+            /** Files Modified */
+            files_modified: number;
+            /** Insertions */
+            insertions: number;
         };
         /**
          * DraftFileResponse
@@ -796,6 +832,59 @@ export interface components {
             slug: string;
             /** To Semver */
             to_semver: string;
+        };
+        /**
+         * VersionHistoryResponse
+         * @description Historique complet d'une Skill, du plus récent au plus ancien.
+         */
+        VersionHistoryResponse: {
+            /** Head */
+            head: string | null;
+            /** Slug */
+            slug: string;
+            /** Versions */
+            versions: components["schemas"]["VersionLogEntryResponse"][];
+        };
+        /**
+         * VersionLogEntryResponse
+         * @description Entrée d'historique d'une version, à la manière d'un commit Git.
+         */
+        VersionLogEntryResponse: {
+            /**
+             * Author Principal Id
+             * Format: uuid
+             */
+            author_principal_id: string;
+            /** Changelog */
+            changelog: string;
+            changes: components["schemas"]["DiffStatsResponse"];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Manifest Sha256 */
+            manifest_sha256: string;
+            /** Origin Integration Id */
+            origin_integration_id: string | null;
+            /** Origin Kind */
+            origin_kind: string;
+            /** Parent Semver */
+            parent_semver: string | null;
+            /**
+             * Published At
+             * Format: date-time
+             */
+            published_at: string;
+            /** Semver */
+            semver: string;
+            /** Status */
+            status: string;
         };
         /**
          * VersionResponse
@@ -2254,6 +2343,91 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DraftResponse"];
+                };
+            };
+            /** @description Authentification requise */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Accès refusé */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Ressource introuvable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Méthode non autorisée */
+            405: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Précondition d'écriture invalide */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Erreur interne */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    get_version_history_api_v1_skills__slug__history_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VersionHistoryResponse"];
                 };
             };
             /** @description Authentification requise */

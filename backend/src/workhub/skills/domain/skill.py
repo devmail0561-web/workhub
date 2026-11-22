@@ -146,6 +146,17 @@ class FileDiff:
 
 
 @dataclass(frozen=True, slots=True)
+class DiffStats:
+    """Statistiques agrégées d'un ensemble de différences."""
+
+    files_added: int
+    files_modified: int
+    files_deleted: int
+    insertions: int
+    deletions: int
+
+
+@dataclass(frozen=True, slots=True)
 class SkillMetadata:
     """Métadonnées minimales lues dans le frontmatter de SKILL.md."""
 
@@ -425,6 +436,35 @@ def diff_files(
             )
         )
     return tuple(diffs)
+
+
+def summarize_diff(diffs: Iterable[FileDiff]) -> DiffStats:
+    """Agrège les changements de fichiers en statistiques de type `git log`."""
+    files_added = 0
+    files_modified = 0
+    files_deleted = 0
+    insertions = 0
+    deletions = 0
+    for diff in diffs:
+        if diff.change == "added":
+            files_added += 1
+        elif diff.change == "deleted":
+            files_deleted += 1
+        else:
+            files_modified += 1
+        if diff.text:
+            for line in diff.text.splitlines():
+                if line.startswith("+") and not line.startswith("+++"):
+                    insertions += 1
+                elif line.startswith("-") and not line.startswith("---"):
+                    deletions += 1
+    return DiffStats(
+        files_added=files_added,
+        files_modified=files_modified,
+        files_deleted=files_deleted,
+        insertions=insertions,
+        deletions=deletions,
+    )
 
 
 def _render_text_diff(

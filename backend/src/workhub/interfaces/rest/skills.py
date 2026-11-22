@@ -17,6 +17,7 @@ from workhub.interfaces.rest.middleware import get_request_id
 from workhub.shared.api import PreconditionFailedError, Principal, ValidationError
 from workhub.skills.api import (
     CreatedSkillView,
+    DiffStats,
     DraftFileView,
     DraftView,
     FileDiffView,
@@ -26,6 +27,8 @@ from workhub.skills.api import (
     StoredFile,
     VersionDetailView,
     VersionDiffView,
+    VersionHistoryView,
+    VersionLogEntryView,
     VersionView,
     get_skill_service,
 )
@@ -288,6 +291,76 @@ class VersionDiffResponse(BaseModel):
         )
 
 
+class DiffStatsResponse(BaseModel):
+    """Statistiques agrégées d'un changement de version."""
+
+    files_added: int
+    files_modified: int
+    files_deleted: int
+    insertions: int
+    deletions: int
+
+    @classmethod
+    def from_stats(cls, stats: DiffStats) -> DiffStatsResponse:
+        return cls(
+            files_added=stats.files_added,
+            files_modified=stats.files_modified,
+            files_deleted=stats.files_deleted,
+            insertions=stats.insertions,
+            deletions=stats.deletions,
+        )
+
+
+class VersionLogEntryResponse(BaseModel):
+    """Entrée d'historique d'une version, à la manière d'un commit Git."""
+
+    id: UUID
+    semver: str
+    parent_semver: str | None
+    status: str
+    changelog: str
+    author_principal_id: UUID
+    manifest_sha256: str
+    origin_kind: str
+    origin_integration_id: UUID | None
+    created_at: datetime
+    published_at: datetime
+    changes: DiffStatsResponse
+
+    @classmethod
+    def from_view(cls, entry: VersionLogEntryView) -> VersionLogEntryResponse:
+        return cls(
+            id=entry.id,
+            semver=entry.semver,
+            parent_semver=entry.parent_semver,
+            status=entry.status,
+            changelog=entry.changelog,
+            author_principal_id=entry.author_principal_id,
+            manifest_sha256=entry.manifest_sha256.hex(),
+            origin_kind=entry.origin_kind,
+            origin_integration_id=entry.origin_integration_id,
+            created_at=entry.created_at,
+            published_at=entry.published_at,
+            changes=DiffStatsResponse.from_stats(entry.changes),
+        )
+
+
+class VersionHistoryResponse(BaseModel):
+    """Historique complet d'une Skill, du plus récent au plus ancien."""
+
+    slug: str
+    head: str | None
+    versions: list[VersionLogEntryResponse]
+
+    @classmethod
+    def from_view(cls, history: VersionHistoryView) -> VersionHistoryResponse:
+        return cls(
+            slug=history.slug,
+            head=history.head,
+            versions=[VersionLogEntryResponse.from_view(entry) for entry in history.versions],
+        )
+
+
 def _decode_file(file: SkillFileRequest) -> SkillFile:
     try:
         content = base64.b64decode(file.content_b64, validate=True)
@@ -468,3 +541,13 @@ async def diff_versions(
             to_semver=to_semver,
         )
     )
+
+
+@router.get("/{slug}/history", response_model=VersionHistoryResponse)
+async def get_version_history(
+    slug: str,
+    principal: Annotated[Principal, Depends(current_principal)],
+    service: Annotated[SkillService, Depends(get_skill_service)],
+) -> VersionHistoryResponse:
+    """Retrace l'historique des versions, du plus récent au plus ancien."""
+    return VersionHistoryResponse.from_view(await service.history(principal, slug))

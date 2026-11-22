@@ -26,6 +26,8 @@ from workhub.skills.application.views import (
     SkillView,
     VersionDetailView,
     VersionDiffView,
+    VersionHistoryView,
+    VersionLogEntryView,
     VersionView,
 )
 from workhub.skills.domain.skill import (
@@ -42,6 +44,7 @@ from workhub.skills.domain.skill import (
     normalize_requirements,
     semver_key,
     skill_metadata,
+    summarize_diff,
     validate_changelog,
     validate_domain,
     validate_files,
@@ -413,20 +416,76 @@ class SkillService:
             files=tuple(FileDiffView.from_diff(diff) for diff in diffs),
         )
 
+    @require_scope("skills:read")
+    async def history(self, principal: Principal, slug: str) -> VersionHistoryView:
+        """Retrace l'historique des versions, du plus récent au plus ancien."""
+        skill = await self._visible_skill(principal, slug)
+        versions = await self._skills.list_versions(skill.id)
+        by_id = {version.id: version for version in versions}
+        semver_by_id = {version.id: version.semver for version in versions}
+        cache: dict[UUID, tuple[SkillFile, ...]] = {}
+        entries: list[VersionLogEntryView] = []
+        for version in sorted(
+            versions,
+            key=lambda item: semver_key(item.semver),
+            reverse=True,
+        ):
+            parent = (
+                by_id.get(version.parent_version_id)
+                if version.parent_version_id is not None
+                else None
+            )
+            before = await self._version_files(parent, cache) if parent is not None else ()
+            after = await self._version_files(version, cache)
+            entries.append(
+                VersionLogEntryView(
+                    id=version.id,
+                    semver=version.semver,
+                    parent_semver=(
+                        semver_by_id.get(version.parent_version_id)
+                        if version.parent_version_id is not None
+                        else None
+                    ),
+                    status=version.status,
+                    changelog=version.changelog,
+                    author_principal_id=version.author_principal_id,
+                    manifest_sha256=version.manifest_sha256,
+                    origin_kind=version.origin_kind,
+                    origin_integration_id=version.origin_integration_id,
+                    created_at=version.created_at,
+                    published_at=version.published_at,
+                    changes=summarize_diff(diff_files(before, after)),
+                )
+            )
+        return VersionHistoryView(
+            slug=skill.slug,
+            head=entries[0].semver if entries else None,
+            versions=tuple(entries),
+        )
+
     async def _find_version(self, skill_id: UUID, semver: str) -> SkillVersion:
         version = await self._skills.find_version(skill_id, validate_semver(semver))
         if version is None:
             raise NotFoundError("Version introuvable")
         return version
 
-    async def _version_files(self, version: SkillVersion) -> tuple[SkillFile, ...]:
+    async def _version_files(
+        self,
+        version: SkillVersion,
+        cache: dict[UUID, tuple[SkillFile, ...]] | None = None,
+    ) -> tuple[SkillFile, ...]:
+        if cache is not None and version.id in cache:
+            return cache[version.id]
         files: list[SkillFile] = []
         for stored in await self._skills.list_version_files(version.id):
             content = await self._skills.read_blob(stored.sha256)
             if content is None:
                 raise RuntimeError(f"Blob introuvable : {stored.path}")
             files.append(SkillFile(path=stored.path, content=content, mode=stored.mode))
-        return tuple(files)
+        result = tuple(files)
+        if cache is not None:
+            cache[version.id] = result
+        return result
 
     def _principal_owner_id(self, principal: Principal) -> UUID:
         if principal.type.value == "integration":
