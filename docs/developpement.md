@@ -117,5 +117,14 @@ actions par SHA (`sha_pinning_required` activé côté dépôt) et borne chaque 
 suppression. Le snapshot `frontend/openapi.json`, les types générés et la réversibilité des
 migrations sont contrôlés à chaque exécution.
 
-Dernière exécution verte avant ce durcissement : run `43473812449` (backend, CLI, frontend,
-Docker) ; le prochain run validera les nouveaux contrôles.
+Le runner self-hosted doit avoir un démon Docker actif : les jobs backend (conteneur
+PostgreSQL), tests d'intégration et construction d'images échouent sinon avec
+`docker.sock: no such file or directory`. Sur l'hôte actuel, Docker Desktop est lancé et
+activé au login via :
+
+```bash
+systemctl --user enable --now docker-desktop
+docker version --format '{{.Server.Version}}'
+```
+
+Dernière exécution verte : run `45058639823` (backend, CLI, frontend, Docker).
