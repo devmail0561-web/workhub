@@ -6,9 +6,9 @@ Cœur Skills : création d'une Skill et de son brouillon, fichiers adressés par
 publication immuable, lecture des versions, manifeste canonique, comparaison et historique des
 versions, API REST.
 
-Tâches couvertes : E2-01 → E2-06, E2-08, E2-11, E2-12 (partie REST/ownership) et E2-14
-(ETag/If-Match). Le cycle de vie (E2-07), l'export/import (E2-09/E2-10), la recherche
-(E2-13), l'UI (E2-15/E2-16) et le scan de secrets E2-03 restent à livrer.
+Tâches couvertes : E2-01 → E2-08, E2-11, E2-12 (partie REST/ownership) et E2-14
+(ETag/If-Match). L'export/import (E2-09/E2-10), la recherche (E2-13), l'UI (E2-15/E2-16)
+et le scan de secrets E2-03 restent à livrer.
 
 ## Règles de sécurité et d'accès
 
@@ -62,6 +62,27 @@ Le manifeste contient `manifest_version`, `name`, `description`, `slug`, `semver
 Les dépendances ne modifient jamais les versions déjà publiées : une nouvelle version d'une
 dépendance n'affecte que les publications suivantes.
 
+## Cycle de vie de la Skill
+
+`POST /api/v1/skills/{slug}/transitions` applique une transition autorisée :
+
+| État courant | Transitions autorisées |
+|---|---|
+| `draft` | `review` |
+| `review` | `draft` |
+| `published` | `deprecated`, `archived` |
+| `deprecated` | `published`, `archived` |
+| `archived` | aucune (terminal) |
+
+- La publication fait passer la Skill en `published` depuis `draft`, `review` ou
+  `deprecated` ; une Skill `archived` est en lecture seule et refuse toute écriture ou
+  publication (`409`).
+- L'archivage renseigne `archived_at`, retire la Skill des listes et la rend invisible aux
+  autres principals ; le propriétaire et les administrateurs conservent l'accès.
+- **Seule la Skill change d'état** : ses versions restent toutes `published`, immuables et
+  lisibles via `GET /versions/{semver}`. Aucune version n'est archivée.
+- Chaque transition est auditée (`skill.transition`) avec les états source et cible.
+
 ## Comparaison de versions
 
 `GET /api/v1/skills/{slug}/diff?from={semver}&to={semver}` compare deux versions publiées
@@ -91,18 +112,17 @@ visibles par le principal :
 
 ## Limites connues
 
-- Le cycle de vie de la Skill (Draft/Review/Published/Deprecated/Archived), le scan de
-  secrets, l'export/import, la recherche, l'UI et MCP restent hors de ce lot.
+- Le scan de secrets, l'export/import, la recherche, l'UI et MCP restent hors de ce lot.
 - L'historique recalcule les statistiques à chaque appel ; une pagination ou un cache pourra
   être ajouté si les historiques deviennent volumineux.
 
 ## Vérifications
 
-- `uv run pytest -m "not integration" -q` : 141 tests, couverture 86,36 %.
+- `uv run pytest -m "not integration" -q` : 144 tests, couverture 86,49 %.
 - `uv run ruff check .` et `uv run ruff format --check .` : verts.
 - `uv run pyright` : 0 erreur.
 - `uv run lint-imports` : 6 contrats conservés.
-- `frontend/openapi.json` : 19 chemins, dont les 9 routes Skills, avec les schémas de
-  dépendances ; snapshot et types régénérés.
+- `frontend/openapi.json` : 20 chemins, dont les 10 routes Skills, avec les schémas de
+  dépendances et de transition ; snapshot et types régénérés.
 - `pnpm run typecheck`, `pnpm test`, `pnpm run build` : verts.
-- Tests d'intégration Skills : 2 tests verts sur PostgreSQL réel (Docker local).
+- Tests d'intégration Skills : 3 tests verts sur PostgreSQL réel (Docker local).

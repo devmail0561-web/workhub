@@ -34,6 +34,15 @@ MAX_DIFF_CHARS = 200_000
 MAX_DEPENDENCIES = 50
 MAX_CONSTRAINT_LENGTH = 200
 
+SKILL_STATUSES = frozenset({"draft", "review", "published", "deprecated", "archived"})
+SKILL_TRANSITIONS: dict[str, frozenset[str]] = {
+    "draft": frozenset({"review"}),
+    "review": frozenset({"draft"}),
+    "published": frozenset({"deprecated", "archived"}),
+    "deprecated": frozenset({"published", "archived"}),
+    "archived": frozenset(),
+}
+
 SemVerKey = tuple[int, int, int, int, tuple[tuple[int, int, str], ...]]
 _CONSTRAINT_VERSION = re.compile(
     r"^(?P<major>0|[1-9][0-9]*)"
@@ -220,6 +229,19 @@ def validate_slug(slug: str) -> str:
             "Le slug doit être en minuscules, sans espace, avec des tirets simples"
         )
     return normalized
+
+
+def validate_skill_transition(current: str, target: str) -> str:
+    """Valide une transition du cycle de vie d'une Skill."""
+    if current not in SKILL_STATUSES:
+        raise ValidationError(f"Statut de Skill inconnu : {current!r}")
+    if target not in SKILL_STATUSES:
+        raise ValidationError(f"Statut de Skill inconnu : {target!r}")
+    if target == current:
+        raise ValidationError(f"La Skill est déjà au statut {current!r}")
+    if target not in SKILL_TRANSITIONS[current]:
+        raise ValidationError(f"Transition de statut interdite : {current} → {target}")
+    return target
 
 
 def validate_semver(semver: str) -> str:

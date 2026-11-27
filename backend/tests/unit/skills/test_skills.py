@@ -38,6 +38,7 @@ from workhub.skills.domain.skill import (
     validate_mode,
     validate_path,
     validate_semver,
+    validate_skill_transition,
 )
 
 SKILL_MD = b"---\nname: demo-skill\ndescription: Demo skill\n---\n# Demo\n"
@@ -221,6 +222,26 @@ def test_semver_constraints_are_validated_and_evaluated() -> None:
     for invalid in ("", ">=1.0.0 ||", "nope", "^", "1.0.0-", "1.x.3", ">= 1.0.0 <"):
         with pytest.raises(ValidationError):
             validate_constraint(invalid)
+
+
+def test_skill_lifecycle_transitions_are_restricted() -> None:
+    assert validate_skill_transition("draft", "review") == "review"
+    assert validate_skill_transition("review", "draft") == "draft"
+    assert validate_skill_transition("published", "deprecated") == "deprecated"
+    assert validate_skill_transition("deprecated", "published") == "published"
+    assert validate_skill_transition("deprecated", "archived") == "archived"
+
+    for current, target in (
+        ("draft", "archived"),
+        ("draft", "published"),
+        ("review", "archived"),
+        ("published", "review"),
+        ("archived", "draft"),
+        ("draft", "draft"),
+        ("draft", "bogus"),
+    ):
+        with pytest.raises(ValidationError):
+            validate_skill_transition(current, target)
 
 
 def test_dependencies_are_normalized_and_deduplicated() -> None:
@@ -542,6 +563,64 @@ async def test_publish_rejects_dependency_cycles() -> None:
         )
 
 
+async def test_skill_lifecycle_keeps_versions_published_and_archives_the_skill_only() -> None:
+    service, repository, audit = build_service()
+    principal = make_principal()
+    reader = Principal(
+        id=uuid4(),
+        type=PrincipalType.INTEGRATION,
+        display_name="Reader",
+        scopes=frozenset({"skills:read"}),
+        owner_user_id=uuid4(),
+    )
+    await create_demo(service, principal)
+
+    assert (await service.transition(principal, "demo-skill", target_status="review")).status == (
+        "review"
+    )
+    assert (await service.transition(principal, "demo-skill", target_status="draft")).status == (
+        "draft"
+    )
+    await service.transition(principal, "demo-skill", target_status="review")
+    await service.publish(principal, "demo-skill", semver="1.0.0", changelog="v1")
+
+    deprecated = await service.transition(principal, "demo-skill", target_status="deprecated")
+    assert deprecated.status == "deprecated"
+    assert deprecated.archived_at is None
+    assert (
+        await service.transition(principal, "demo-skill", target_status="published")
+    ).status == ("published")
+
+    archived = await service.transition(principal, "demo-skill", target_status="archived")
+    assert archived.status == "archived"
+    assert archived.archived_at is not None
+    assert repository.skills[archived.id].status == "archived"
+
+    detail = await service.get_version(principal, "demo-skill", "1.0.0")
+    assert detail.version.status == "published"
+    with pytest.raises(NotFoundError):
+        await service.get(reader, "demo-skill")
+    assert await service.list(principal) == []
+
+    with pytest.raises(ConflictError):
+        await service.put_file(
+            principal,
+            "demo-skill",
+            path="notes.txt",
+            content=b"late",
+            expected_lock_version=1,
+        )
+    with pytest.raises(ConflictError):
+        await service.publish(principal, "demo-skill", semver="1.1.0", changelog="late")
+    with pytest.raises(ValidationError):
+        await service.transition(principal, "demo-skill", target_status="draft")
+    assert [entry.action for entry in audit.entries][-3:] == [
+        "skill.transition",
+        "skill.transition",
+        "skill.transition",
+    ]
+
+
 async def test_create_rejects_duplicates_and_invalid_files() -> None:
     service, _, _ = build_service()
     principal = make_principal()
@@ -768,6 +847,68 @@ async def test_rest_dependencies_are_declared_and_resolved() -> None:
             )
             assert cycle.status_code == 422
             assert "elle-même" in cycle.json()["error"]["message"]
+    finally:
+        app.dependency_overrides.clear()
+
+
+async def test_rest_skill_lifecycle_transitions() -> None:
+    service, _, _ = build_service()
+    principal = make_principal()
+    await create_demo(service, principal)
+
+    async def override_service() -> AsyncIterator[SkillService]:
+        yield service
+
+    app.dependency_overrides[get_skill_service] = override_service
+    app.dependency_overrides[current_principal] = lambda: principal
+    transport = httpx.ASGITransport(app=app)
+    try:
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            review = await client.post(
+                "/api/v1/skills/demo-skill/transitions",
+                json={"target": "review"},
+            )
+            assert review.status_code == 200
+            assert review.json()["status"] == "review"
+
+            invalid = await client.post(
+                "/api/v1/skills/demo-skill/transitions",
+                json={"target": "archived"},
+            )
+            assert invalid.status_code == 422
+
+            published = await client.post(
+                "/api/v1/skills/demo-skill/publish",
+                headers={"If-Match": '"0"'},
+                json={"semver": "1.0.0", "changelog": "v1"},
+            )
+            assert published.status_code == 200
+
+            deprecated = await client.post(
+                "/api/v1/skills/demo-skill/transitions",
+                json={"target": "deprecated"},
+            )
+            assert deprecated.status_code == 200
+            assert deprecated.json()["status"] == "deprecated"
+
+            archived = await client.post(
+                "/api/v1/skills/demo-skill/transitions",
+                json={"target": "archived"},
+            )
+            assert archived.status_code == 200
+            assert archived.json()["status"] == "archived"
+            assert archived.json()["archived_at"] is not None
+
+            version = await client.get("/api/v1/skills/demo-skill/versions/1.0.0")
+            assert version.status_code == 200
+            assert version.json()["version"]["status"] == "published"
+
+            blocked = await client.put(
+                "/api/v1/skills/demo-skill/draft/files/notes.txt",
+                headers={"If-Match": '"1"'},
+                json={"content_b64": base64.b64encode(b"late").decode("ascii")},
+            )
+            assert blocked.status_code == 409
     finally:
         app.dependency_overrides.clear()
 

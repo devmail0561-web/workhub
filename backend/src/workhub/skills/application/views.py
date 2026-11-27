@@ -19,6 +19,7 @@ class SkillView:
     status: str
     tags: tuple[str, ...]
     created_at: datetime
+    archived_at: datetime | None = None
 
     @classmethod
     def from_skill(cls, skill: Skill) -> SkillView:
@@ -29,6 +30,7 @@ class SkillView:
             status=skill.status,
             tags=skill.tags,
             created_at=skill.created_at,
+            archived_at=skill.archived_at,
         )
 
 

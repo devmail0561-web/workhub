@@ -241,9 +241,16 @@ class SqlAlchemySkillRepository:
         except IntegrityError as exc:
             raise ConflictError(f"La Skill {skill.slug!r} existe déjà") from exc
 
-    async def update_skill_status(self, skill_id: UUID, status: str) -> None:
+    async def update_skill_status(
+        self,
+        skill_id: UUID,
+        status: str,
+        archived_at: datetime | None = None,
+    ) -> None:
         await self._session.execute(
-            update(SkillRow).where(SkillRow.id == skill_id).values(status_logical=status)
+            update(SkillRow)
+            .where(SkillRow.id == skill_id)
+            .values(status_logical=status, archived_at=archived_at)
         )
 
     async def add_draft(self, draft: SkillDraft) -> None:

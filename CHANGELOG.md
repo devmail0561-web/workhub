@@ -56,6 +56,11 @@ développement : la version `0.1.0` correspond à l'amorçage, sans release publ
   contrainte SemVer (exacte, `>=`, `^`, `~`, jokers, `||`), résout la version publiée la plus
   récente qui la satisfait, persiste le lien dans `skill_dependency` et rejette les
   auto-dépendances, contraintes insatisfaites et cycles avec le chemin fautif.
+- **Cycle de vie de la Skill (E2-07)** : machine à états `draft → review → published →
+  deprecated → archived` avec transitions contrôlées, route
+  `POST /api/v1/skills/{slug}/transitions`, audit des changements, `archived_at` et lecture
+  seule des Skills archivées. Les versions publiées ne sont jamais archivées : seule la
+  Skill change d'état.
 - **Durcissement base de données** : rôles `workhub_owner` (migrations) et `workhub_app`
   (runtime, sans DDL ni `TRUNCATE`), scripts `deploy/postgres/bootstrap.sh` et
   `permissions.sh`, services Compose `db-bootstrap` et `db-grants`.

@@ -31,7 +31,12 @@ class SkillRepository(Protocol):
 
     async def add_skill(self, skill: Skill) -> None: ...
 
-    async def update_skill_status(self, skill_id: UUID, status: str) -> None: ...
+    async def update_skill_status(
+        self,
+        skill_id: UUID,
+        status: str,
+        archived_at: datetime | None = None,
+    ) -> None: ...
 
     async def add_draft(self, draft: SkillDraft) -> None: ...
 

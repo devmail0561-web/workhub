@@ -78,6 +78,12 @@ class PutFileRequest(BaseModel):
     mode: str = Field(default="0644", pattern=r"^[0-7]{3,4}$")
 
 
+class TransitionRequest(BaseModel):
+    """Transition demandée du cycle de vie d'une Skill."""
+
+    target: str = Field(pattern=r"^(draft|review|published|deprecated|archived)$")
+
+
 class RequirementRequest(BaseModel):
     """Exigence déclarée dans le manifeste d'une Skill."""
 
@@ -130,6 +136,7 @@ class SkillResponse(BaseModel):
     status: str
     tags: list[str]
     created_at: datetime
+    archived_at: datetime | None = None
 
     @classmethod
     def from_view(cls, skill: SkillView) -> SkillResponse:
@@ -140,6 +147,7 @@ class SkillResponse(BaseModel):
             status=skill.status,
             tags=list(skill.tags),
             created_at=skill.created_at,
+            archived_at=skill.archived_at,
         )
 
 
@@ -447,6 +455,25 @@ async def get_skill(
 ) -> SkillResponse:
     """Retourne une Skill."""
     return SkillResponse.from_view(await service.get(principal, slug))
+
+
+@router.post("/{slug}/transitions", response_model=SkillResponse)
+async def transition_skill(
+    slug: str,
+    payload: TransitionRequest,
+    request: Request,
+    principal: Annotated[Principal, Depends(current_principal)],
+    service: Annotated[SkillService, Depends(get_skill_service)],
+) -> SkillResponse:
+    """Applique une transition du cycle de vie de la Skill."""
+    return SkillResponse.from_view(
+        await service.transition(
+            principal,
+            slug,
+            target_status=payload.target,
+            request_id=get_request_id(request),
+        )
+    )
 
 
 @router.get("/{slug}/draft", response_model=DraftResponse)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import cast
 from uuid import UUID
 
@@ -57,6 +58,7 @@ from workhub.skills.domain.skill import (
     validate_mode,
     validate_path,
     validate_semver,
+    validate_skill_transition,
     validate_slug,
 )
 
@@ -148,6 +150,30 @@ class SkillService:
         skill = await self._visible_skill(principal, slug)
         return SkillView.from_skill(skill)
 
+    @require_scope("skills:publish")
+    async def transition(
+        self,
+        principal: Principal,
+        slug: str,
+        *,
+        target_status: str,
+        request_id: str | None = None,
+    ) -> SkillView:
+        """Applique une transition autorisée du cycle de vie de la Skill."""
+        skill = await self._owned_skill(principal, slug)
+        target = validate_skill_transition(skill.status, target_status)
+        archived_at = self._clock.now() if target == "archived" else None
+        await self._skills.update_skill_status(skill.id, target, archived_at)
+        await self._record(
+            principal,
+            action="skill.transition",
+            resource_id=str(skill.id),
+            request_id=request_id,
+            details={"slug": skill.slug, "from": skill.status, "to": target},
+        )
+        await self._commit()
+        return SkillView.from_skill(replace(skill, status=target, archived_at=archived_at))
+
     @require_scope("skills:read")
     async def get_draft(self, principal: Principal, slug: str) -> DraftView:
         """Retourne le brouillon et son contenu."""
@@ -171,6 +197,7 @@ class SkillService:
     ) -> DraftView:
         """Crée ou remplace un fichier du brouillon sous précondition ETag."""
         skill = await self._owned_skill(principal, slug)
+        self._ensure_mutable(skill)
         draft = await self._skills.find_draft(skill.id)
         if draft is None:
             raise NotFoundError("Brouillon introuvable")
@@ -228,6 +255,7 @@ class SkillService:
     ) -> DraftView:
         """Supprime un fichier du brouillon sous précondition ETag."""
         skill = await self._owned_skill(principal, slug)
+        self._ensure_mutable(skill)
         draft = await self._skills.find_draft(skill.id)
         if draft is None:
             raise NotFoundError("Brouillon introuvable")
@@ -271,6 +299,7 @@ class SkillService:
     ) -> VersionView:
         """Publie le brouillon courant comme nouvelle version immuable."""
         skill = await self._owned_skill(principal, slug)
+        self._ensure_mutable(skill)
         draft = await self._skills.find_draft(skill.id)
         if draft is None:
             raise NotFoundError("Brouillon introuvable")
@@ -604,6 +633,10 @@ class SkillService:
         if skill is None or (skill.owner_id != owner_id and not principal.has_scope("*")):
             raise NotFoundError("Skill introuvable")
         return skill
+
+    def _ensure_mutable(self, skill: Skill) -> None:
+        if skill.status == "archived":
+            raise ConflictError("Une Skill archivée est en lecture seule")
 
     async def _visible_skill(self, principal: Principal, slug: str) -> Skill:
         skill = await self._skills.find_by_slug(validate_slug(slug))

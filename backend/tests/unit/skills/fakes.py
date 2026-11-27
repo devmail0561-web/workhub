@@ -39,18 +39,28 @@ class FakeSkillRepository:
 
     async def list_visible(self, owner_id: UUID, *, include_all: bool) -> list[Skill]:
         if include_all:
-            return list(self.skills.values())
+            return [skill for skill in self.skills.values() if skill.archived_at is None]
         return [
             skill
             for skill in self.skills.values()
-            if skill.owner_id == owner_id or skill.status in {"published", "deprecated"}
+            if skill.archived_at is None
+            and (skill.owner_id == owner_id or skill.status in {"published", "deprecated"})
         ]
 
     async def add_skill(self, skill: Skill) -> None:
         self.skills[skill.id] = skill
 
-    async def update_skill_status(self, skill_id: UUID, status: str) -> None:
-        self.skills[skill_id] = replace(self.skills[skill_id], status=status)
+    async def update_skill_status(
+        self,
+        skill_id: UUID,
+        status: str,
+        archived_at: datetime | None = None,
+    ) -> None:
+        self.skills[skill_id] = replace(
+            self.skills[skill_id],
+            status=status,
+            archived_at=archived_at,
+        )
 
     async def add_draft(self, draft: SkillDraft) -> None:
         self.drafts[draft.skill_id] = draft

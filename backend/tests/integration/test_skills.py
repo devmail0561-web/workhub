@@ -186,3 +186,35 @@ async def test_skill_dependencies_are_persisted_and_cycles_rejected(
             changelog="would create a cycle",
             dependencies=({"slug": demo_slug, "constraint": "^1.0.0"},),
         )
+
+
+async def test_skill_lifecycle_is_persisted_without_archiving_versions(
+    session: AsyncSession,
+) -> None:
+    owner = await _admin(session)
+    slug = f"lifecycle-{uuid4().hex[:8]}"
+    content = f"---\nname: {slug}\ndescription: Skill {slug}\n---\n".encode()
+    skills = _skill_service(session)
+    created = await skills.create(
+        owner,
+        slug=slug,
+        domain="security",
+        files=(SkillFile(path="SKILL.md", content=content),),
+    )
+    await skills.transition(owner, slug, target_status="review")
+    await skills.publish(owner, slug, semver="1.0.0", changelog="v1")
+    await skills.transition(owner, slug, target_status="deprecated")
+    archived = await skills.transition(owner, slug, target_status="archived")
+
+    skill_row = (
+        await session.execute(select(SkillRow).where(SkillRow.id == created.skill.id))
+    ).scalar_one()
+    assert skill_row.status_logical == "archived"
+    assert skill_row.archived_at is not None
+    version_row = (
+        await session.execute(
+            select(SkillVersionRow).where(SkillVersionRow.skill_id == skill_row.id)
+        )
+    ).scalar_one()
+    assert version_row.status == "published"
+    assert archived.archived_at is not None
