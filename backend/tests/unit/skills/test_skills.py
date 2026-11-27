@@ -621,6 +621,84 @@ async def test_skill_lifecycle_keeps_versions_published_and_archives_the_skill_o
     ]
 
 
+async def test_rollback_creates_a_new_version_from_old_content() -> None:
+    service, _, audit = build_service()
+    principal = make_principal()
+    await create_demo(service, principal)
+    await service.publish(principal, "demo-skill", semver="1.0.0", changelog="v1")
+    await service.put_file(
+        principal,
+        "demo-skill",
+        path="notes.txt",
+        content=b"hello\n",
+        expected_lock_version=1,
+    )
+    await service.publish(principal, "demo-skill", semver="2.0.0", changelog="v2")
+
+    rolled = await service.rollback(
+        principal,
+        "demo-skill",
+        from_semver="1.0.0",
+        semver="3.0.0",
+        changelog="retour à v1",
+    )
+
+    assert rolled.semver == "3.0.0"
+    assert rolled.parent_semver == "2.0.0"
+    detail = await service.get_version(principal, "demo-skill", "3.0.0")
+    assert [file.path for file in detail.files] == ["SKILL.md"]
+    assert detail.manifest["semver"] == "3.0.0"
+    assert detail.manifest["parent"] == "2.0.0"
+    current = await service.get_version(principal, "demo-skill", "2.0.0")
+    assert [file.path for file in current.files] == ["SKILL.md", "notes.txt"]
+    draft = await service.get_draft(principal, "demo-skill")
+    assert [file.path for file in draft.files] == ["SKILL.md"]
+    assert draft.lock_version == 4
+    assert [
+        entry.semver for entry in (await service.history(principal, "demo-skill")).versions
+    ] == [
+        "3.0.0",
+        "2.0.0",
+        "1.0.0",
+    ]
+    assert audit.entries[-1].action == "skill.rollback"
+
+    with pytest.raises(ConflictError):
+        await service.rollback(
+            principal,
+            "demo-skill",
+            from_semver="1.0.0",
+            semver="2.5.0",
+            changelog="trop petit",
+        )
+    with pytest.raises(NotFoundError):
+        await service.rollback(
+            principal,
+            "demo-skill",
+            from_semver="9.9.9",
+            semver="4.0.0",
+            changelog="inconnue",
+        )
+
+
+async def test_rollback_is_refused_on_archived_skill() -> None:
+    service, _, _ = build_service()
+    principal = make_principal()
+    await create_demo(service, principal)
+    await service.publish(principal, "demo-skill", semver="1.0.0", changelog="v1")
+    await service.transition(principal, "demo-skill", target_status="deprecated")
+    await service.transition(principal, "demo-skill", target_status="archived")
+
+    with pytest.raises(ConflictError):
+        await service.rollback(
+            principal,
+            "demo-skill",
+            from_semver="1.0.0",
+            semver="2.0.0",
+            changelog="trop tard",
+        )
+
+
 async def test_create_rejects_duplicates_and_invalid_files() -> None:
     service, _, _ = build_service()
     principal = make_principal()
@@ -1046,6 +1124,35 @@ async def test_rest_skills_flow() -> None:
             assert latest["changes"]["files_added"] == 1
             assert latest["changes"]["insertions"] == 1
             assert first["parent_semver"] is None
+
+            rolled = await client.post(
+                "/api/v1/skills/demo-skill/rollback",
+                headers={"If-Match": '"4"'},
+                json={
+                    "from_semver": "1.0.0",
+                    "semver": "2.0.0",
+                    "changelog": "Retour à la première version",
+                },
+            )
+            assert rolled.status_code == 200
+            assert rolled.json()["semver"] == "2.0.0"
+            assert rolled.json()["parent_semver"] == "1.1.0"
+            restored = await client.get("/api/v1/skills/demo-skill/versions/2.0.0")
+            assert [item["path"] for item in restored.json()["files"]] == [
+                "SKILL.md",
+                "notes.txt",
+            ]
+
+            stale_rollback = await client.post(
+                "/api/v1/skills/demo-skill/rollback",
+                headers={"If-Match": '"4"'},
+                json={
+                    "from_semver": "1.0.0",
+                    "semver": "3.0.0",
+                    "changelog": "stale",
+                },
+            )
+            assert stale_rollback.status_code == 412
 
             previous = await client.get("/api/v1/skills/demo-skill/versions/1.0.0")
             assert previous.status_code == 200

@@ -61,6 +61,10 @@ développement : la version `0.1.0` correspond à l'amorçage, sans release publ
   `POST /api/v1/skills/{slug}/transitions`, audit des changements, `archived_at` et lecture
   seule des Skills archivées. Les versions publiées ne sont jamais archivées : seule la
   Skill change d'état.
+- **Rollback (E2-12)** : `POST /api/v1/skills/{slug}/rollback` republie le contenu d'une
+  version antérieure sous un nouveau SemVer (strictement supérieur), avec nouveau parent,
+  requirements et dépendances restaurés, brouillon remis à l'identique et historique
+  intact.
 - **Durcissement base de données** : rôles `workhub_owner` (migrations) et `workhub_app`
   (runtime, sans DDL ni `TRUNCATE`), scripts `deploy/postgres/bootstrap.sh` et
   `permissions.sh`, services Compose `db-bootstrap` et `db-grants`.

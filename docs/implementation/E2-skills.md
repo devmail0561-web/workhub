@@ -6,9 +6,9 @@ Cœur Skills : création d'une Skill et de son brouillon, fichiers adressés par
 publication immuable, lecture des versions, manifeste canonique, comparaison et historique des
 versions, API REST.
 
-Tâches couvertes : E2-01 → E2-08, E2-11, E2-12 (partie REST/ownership) et E2-14
-(ETag/If-Match). L'export/import (E2-09/E2-10), la recherche (E2-13), l'UI (E2-15/E2-16)
-et le scan de secrets E2-03 restent à livrer.
+Tâches couvertes : E2-01 → E2-08, E2-11, E2-12 et E2-14 (ETag/If-Match). L'export/import
+(E2-09/E2-10), la recherche (E2-13), l'UI (E2-15/E2-16) et le scan de secrets E2-03 restent
+à livrer.
 
 ## Règles de sécurité et d'accès
 
@@ -83,6 +83,21 @@ dépendance n'affecte que les publications suivantes.
   lisibles via `GET /versions/{semver}`. Aucune version n'est archivée.
 - Chaque transition est auditée (`skill.transition`) avec les états source et cible.
 
+## Rollback
+
+`POST /api/v1/skills/{slug}/rollback` crée une **nouvelle version** à partir du contenu
+d'une version antérieure :
+
+- le corps porte `from_semver`, `semver` et `changelog` ; `If-Match` est obligatoire ;
+- le nouveau SemVer doit être strictement supérieur à la version courante ;
+- les fichiers, requirements et dépendances de la version source sont restaurés, avec un
+  nouveau manifeste dont le parent est la version courante ;
+- le brouillon est remis à l'identique du contenu restauré, prêt pour une édition
+  ultérieure ;
+- l'historique reste intact : la version source et toutes les versions intermédiaires
+  restent `published` et lisibles ;
+- l'action est auditée (`skill.rollback`) ; une Skill archivée refuse le rollback (`409`).
+
 ## Comparaison de versions
 
 `GET /api/v1/skills/{slug}/diff?from={semver}&to={semver}` compare deux versions publiées
@@ -118,11 +133,11 @@ visibles par le principal :
 
 ## Vérifications
 
-- `uv run pytest -m "not integration" -q` : 144 tests, couverture 86,49 %.
+- `uv run pytest -m "not integration" -q` : 146 tests, couverture 86,13 %.
 - `uv run ruff check .` et `uv run ruff format --check .` : verts.
 - `uv run pyright` : 0 erreur.
 - `uv run lint-imports` : 6 contrats conservés.
-- `frontend/openapi.json` : 20 chemins, dont les 10 routes Skills, avec les schémas de
-  dépendances et de transition ; snapshot et types régénérés.
+- `frontend/openapi.json` : 21 chemins, dont les 11 routes Skills, avec les schémas de
+  dépendances, de transition et de rollback ; snapshot et types régénérés.
 - `pnpm run typecheck`, `pnpm test`, `pnpm run build` : verts.
-- Tests d'intégration Skills : 3 tests verts sur PostgreSQL réel (Docker local).
+- Tests d'intégration Skills : 4 tests verts sur PostgreSQL réel (Docker local).

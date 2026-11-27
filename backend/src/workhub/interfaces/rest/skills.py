@@ -127,6 +127,14 @@ class PublishRequest(BaseModel):
     dependencies: list[DependencyRequest] | None = Field(default=None, max_length=50)
 
 
+class RollbackRequest(BaseModel):
+    """Rollback : nouvelle version construite depuis une version antérieure."""
+
+    from_semver: str = Field(min_length=1, max_length=100)
+    semver: str = Field(min_length=1, max_length=100)
+    changelog: str = Field(min_length=1, max_length=10_000)
+
+
 class SkillResponse(BaseModel):
     """Skill exposée."""
 
@@ -555,6 +563,28 @@ async def publish_skill(
             requirement.to_payload() for requirement in (payload.requirements or ())
         ),
         dependencies=tuple(dependency.to_payload() for dependency in (payload.dependencies or ())),
+        expected_lock_version=_parse_if_match(if_match),
+        request_id=get_request_id(request),
+    )
+    return VersionResponse.from_view(version)
+
+
+@router.post("/{slug}/rollback", response_model=VersionResponse)
+async def rollback_skill(
+    slug: str,
+    payload: RollbackRequest,
+    request: Request,
+    principal: Annotated[Principal, Depends(current_principal)],
+    service: Annotated[SkillService, Depends(get_skill_service)],
+    if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+) -> VersionResponse:
+    """Publie une nouvelle version à partir d'une version antérieure."""
+    version = await service.rollback(
+        principal,
+        slug,
+        from_semver=payload.from_semver,
+        semver=payload.semver,
+        changelog=payload.changelog,
         expected_lock_version=_parse_if_match(if_match),
         request_id=get_request_id(request),
     )

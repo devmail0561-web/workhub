@@ -218,3 +218,40 @@ async def test_skill_lifecycle_is_persisted_without_archiving_versions(
     ).scalar_one()
     assert version_row.status == "published"
     assert archived.archived_at is not None
+
+
+async def test_rollback_restores_old_content_and_draft(session: AsyncSession) -> None:
+    owner = await _admin(session)
+    slug = f"rollback-{uuid4().hex[:8]}"
+    content = f"---\nname: {slug}\ndescription: Skill {slug}\n---\n".encode()
+    skills = _skill_service(session)
+    await skills.create(
+        owner,
+        slug=slug,
+        domain="security",
+        files=(SkillFile(path="SKILL.md", content=content),),
+    )
+    await skills.publish(owner, slug, semver="1.0.0", changelog="v1")
+    await skills.put_file(
+        owner,
+        slug,
+        path="notes.txt",
+        content=b"notes\n",
+        expected_lock_version=1,
+    )
+    await skills.publish(owner, slug, semver="2.0.0", changelog="v2")
+
+    rolled = await skills.rollback(
+        owner,
+        slug,
+        from_semver="1.0.0",
+        semver="3.0.0",
+        changelog="retour à v1",
+    )
+
+    assert rolled.semver == "3.0.0"
+    detail = await skills.get_version(owner, slug, "3.0.0")
+    assert [file.path for file in detail.files] == ["SKILL.md"]
+    draft = await skills.get_draft(owner, slug)
+    assert [file.path for file in draft.files] == ["SKILL.md"]
+    assert draft.lock_version == 4

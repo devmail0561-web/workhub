@@ -53,6 +53,7 @@ from workhub.skills.domain.skill import (
     skill_metadata,
     summarize_diff,
     validate_changelog,
+    validate_constraint,
     validate_domain,
     validate_files,
     validate_mode,
@@ -394,6 +395,113 @@ class SkillService:
             parent_semver=parent.semver if parent is not None else None,
         )
 
+    @require_scope("skills:publish")
+    async def rollback(
+        self,
+        principal: Principal,
+        slug: str,
+        *,
+        from_semver: str,
+        semver: str,
+        changelog: str,
+        expected_lock_version: int | None = None,
+        request_id: str | None = None,
+    ) -> VersionView:
+        """Publie une nouvelle version à partir du contenu d'une version antérieure."""
+        skill = await self._owned_skill(principal, slug)
+        self._ensure_mutable(skill)
+        source = await self._find_version(skill.id, from_semver)
+        normalized_semver = validate_semver(semver)
+        normalized_changelog = validate_changelog(changelog)
+        draft = await self._skills.find_draft(skill.id)
+        if draft is None:
+            raise NotFoundError("Brouillon introuvable")
+
+        versions = await self._skills.list_versions(skill.id)
+        latest = max(versions, key=lambda item: semver_key(item.semver), default=None)
+        if latest is not None and semver_key(normalized_semver) <= semver_key(latest.semver):
+            raise ConflictError(
+                f"La version {normalized_semver} doit être supérieure à {latest.semver}"
+            )
+
+        source_files = await self._version_files(source)
+        requirements = _manifest_requirements(source.manifest)
+        dependency_payloads = _manifest_dependency_payloads(source.manifest)
+        resolved_dependencies = await self._resolve_manifest_dependencies(dependency_payloads)
+        for dependency in resolved_dependencies:
+            await self._assert_no_cycle(skill.id, dependency, (skill.slug,), set())
+        metadata = skill_metadata(source_files, slug=skill.slug)
+        manifest = build_manifest(
+            slug=skill.slug,
+            name=metadata.name,
+            description=metadata.description,
+            semver=normalized_semver,
+            parent=latest.semver if latest is not None else None,
+            files=source_files,
+            requirements=requirements,
+            dependencies=dependency_payloads,
+        )
+
+        expected = draft.lock_version if expected_lock_version is None else expected_lock_version
+        if expected != draft.lock_version:
+            raise PreconditionFailedError("Le brouillon a été modifié entre-temps")
+        now = self._clock.now()
+        origin_kind = "integration" if principal.type.value == "integration" else "app"
+        version = SkillVersion(
+            id=self._id_factory(),
+            skill_id=skill.id,
+            semver=normalized_semver,
+            manifest=manifest,
+            manifest_sha256=manifest_sha256(manifest),
+            parent_version_id=latest.id if latest is not None else None,
+            status="published",
+            changelog=normalized_changelog,
+            author_principal_id=principal.id,
+            created_at=now,
+            published_at=now,
+            origin_kind=origin_kind,
+            origin_integration_id=(principal.id if origin_kind == "integration" else None),
+        )
+        await self._skills.add_version(
+            version,
+            source_files,
+            requirements,
+            resolved_dependencies,
+        )
+
+        stored_source = await self._skills.list_version_files(source.id)
+        source_paths = {stored.path for stored in stored_source}
+        for stored in await self._skills.list_draft_files(draft.id):
+            if stored.path not in source_paths:
+                await self._skills.delete_draft_file(draft.id, stored.path)
+        for stored in stored_source:
+            await self._skills.put_draft_file(
+                draft.id,
+                stored.path,
+                stored.sha256,
+                stored.mode,
+            )
+        if not await self._skills.update_draft_base(draft.id, version.id, expected, now):
+            raise PreconditionFailedError("Le brouillon a été modifié entre-temps")
+        await self._skills.update_skill_status(skill.id, "published")
+        await self._record(
+            principal,
+            action="skill.rollback",
+            resource_id=str(skill.id),
+            request_id=request_id,
+            details={
+                "slug": skill.slug,
+                "from_semver": source.semver,
+                "semver": version.semver,
+                "manifest_sha256": version.manifest_sha256.hex(),
+            },
+        )
+        await self._commit()
+        return VersionView.from_version(
+            version,
+            parent_semver=latest.semver if latest is not None else None,
+        )
+
     @require_scope("skills:read")
     async def list_versions(self, principal: Principal, slug: str) -> list[VersionView]:
         """Liste les versions publiées d'une Skill visible."""
@@ -558,6 +666,32 @@ class SkillService:
         ]
         return max(candidates, key=lambda item: semver_key(item.semver), default=None)
 
+    async def _resolve_manifest_dependencies(
+        self,
+        dependencies: tuple[dict[str, object], ...],
+    ) -> tuple[ResolvedDependency, ...]:
+        resolved: list[ResolvedDependency] = []
+        for payload in dependencies:
+            slug = validate_slug(_manifest_text(payload, "slug"))
+            constraint = validate_constraint(_manifest_text(payload, "constraint"))
+            semver = validate_semver(_manifest_text(payload, "resolved_semver"))
+            target = await self._skills.find_by_slug(slug)
+            if target is None:
+                raise ConflictError(f"Dépendance introuvable : {slug}")
+            version = await self._skills.find_version(target.id, semver)
+            if version is None:
+                raise ConflictError(f"Version de dépendance introuvable : {slug}@{semver}")
+            resolved.append(
+                ResolvedDependency(
+                    slug=slug,
+                    constraint=constraint,
+                    skill_id=target.id,
+                    version_id=version.id,
+                    semver=semver,
+                )
+            )
+        return tuple(resolved)
+
     async def _assert_no_cycle(
         self,
         root_skill_id: UUID,
@@ -693,6 +827,37 @@ class SkillService:
                 details=details,
             )
         )
+
+
+def _manifest_requirements(manifest: dict[str, object]) -> tuple[dict[str, object], ...]:
+    raw = manifest.get("requirements")
+    if not isinstance(raw, list):
+        return ()
+    return tuple(
+        cast("dict[str, object]", item)
+        for item in cast("list[object]", raw)
+        if isinstance(item, dict)
+    )
+
+
+def _manifest_dependency_payloads(
+    manifest: dict[str, object],
+) -> tuple[dict[str, object], ...]:
+    raw = manifest.get("dependencies")
+    if not isinstance(raw, list):
+        return ()
+    return tuple(
+        cast("dict[str, object]", item)
+        for item in cast("list[object]", raw)
+        if isinstance(item, dict)
+    )
+
+
+def _manifest_text(payload: dict[str, object], key: str) -> str:
+    value = payload.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise ConflictError(f"Manifeste de dépendance invalide : champ {key} manquant")
+    return value
 
 
 def _manifest_dependencies(
