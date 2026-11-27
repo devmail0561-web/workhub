@@ -21,6 +21,7 @@ from workhub.skills.api import (
     DraftFileView,
     DraftView,
     FileDiffView,
+    ResolvedDependencyView,
     SkillFile,
     SkillService,
     SkillView,
@@ -100,12 +101,24 @@ class RequirementRequest(BaseModel):
         }
 
 
+class DependencyRequest(BaseModel):
+    """Dépendance vers une autre Skill, avec une contrainte SemVer."""
+
+    slug: str = Field(min_length=1, max_length=200)
+    constraint: str = Field(min_length=1, max_length=200)
+
+    def to_payload(self) -> dict[str, object]:
+        """Convertit l'entrée en dictionnaire compatible manifeste."""
+        return {"slug": self.slug, "constraint": self.constraint}
+
+
 class PublishRequest(BaseModel):
     """Publication d'une version immuable."""
 
     semver: str = Field(min_length=1, max_length=100)
     changelog: str = Field(min_length=1, max_length=10_000)
     requirements: list[RequirementRequest] | None = Field(default=None, max_length=100)
+    dependencies: list[DependencyRequest] | None = Field(default=None, max_length=50)
 
 
 class SkillResponse(BaseModel):
@@ -225,12 +238,29 @@ class StoredFileResponse(BaseModel):
         return cls(path=file.path, sha256=file.sha256.hex(), size=file.size, mode=file.mode)
 
 
+class DependencyResponse(BaseModel):
+    """Dépendance déclarée et version publiée retenue."""
+
+    slug: str
+    constraint: str
+    resolved_semver: str
+
+    @classmethod
+    def from_view(cls, dependency: ResolvedDependencyView) -> DependencyResponse:
+        return cls(
+            slug=dependency.slug,
+            constraint=dependency.constraint,
+            resolved_semver=dependency.resolved_semver,
+        )
+
+
 class VersionDetailResponse(BaseModel):
     """Version publiée avec fichiers et manifeste."""
 
     version: VersionResponse
     files: list[StoredFileResponse]
     manifest: dict[str, object]
+    dependencies: list[DependencyResponse]
 
     @classmethod
     def from_view(cls, detail: VersionDetailView) -> VersionDetailResponse:
@@ -238,6 +268,9 @@ class VersionDetailResponse(BaseModel):
             version=VersionResponse.from_view(detail.version),
             files=[StoredFileResponse.from_stored(file) for file in detail.files],
             manifest=detail.manifest,
+            dependencies=[
+                DependencyResponse.from_view(dependency) for dependency in detail.dependencies
+            ],
         )
 
 
@@ -494,6 +527,7 @@ async def publish_skill(
         requirements=tuple(
             requirement.to_payload() for requirement in (payload.requirements or ())
         ),
+        dependencies=tuple(dependency.to_payload() for dependency in (payload.dependencies or ())),
         expected_lock_version=_parse_if_match(if_match),
         request_id=get_request_id(request),
     )

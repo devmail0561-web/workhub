@@ -96,6 +96,16 @@ class VersionDetailView:
     version: VersionView
     files: tuple[StoredFile, ...]
     manifest: dict[str, object]
+    dependencies: tuple[ResolvedDependencyView, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedDependencyView:
+    """Dépendance déclarée et version publiée retenue lors de la publication."""
+
+    slug: str
+    constraint: str
+    resolved_semver: str
 
 
 @dataclass(frozen=True, slots=True)

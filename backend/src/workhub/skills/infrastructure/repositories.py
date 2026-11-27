@@ -30,7 +30,9 @@ from sqlalchemy.orm import Mapped, mapped_column
 from workhub.shared.api import ConflictError
 from workhub.shared.infrastructure.database import Base
 from workhub.skills.domain.skill import (
+    ResolvedDependency,
     Skill,
+    SkillDependency,
     SkillDraft,
     SkillFile,
     SkillVersion,
@@ -142,6 +144,16 @@ class SkillRequirementRow(Base):
     note: Mapped[str | None] = mapped_column(Text)
 
 
+class SkillDependencyRow(Base):
+    """Table `skill_dependency`."""
+
+    __tablename__ = "skill_dependency"
+
+    version_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    depends_on_skill_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    version_constraint: Mapped[str] = mapped_column(Text, nullable=False)
+
+
 def _to_skill(row: SkillRow) -> Skill:
     return Skill(
         id=row.id,
@@ -193,6 +205,10 @@ class SqlAlchemySkillRepository:
         row = (
             await self._session.execute(select(SkillRow).where(SkillRow.slug == slug))
         ).scalar_one_or_none()
+        return None if row is None else _to_skill(row)
+
+    async def find_by_id(self, skill_id: UUID) -> Skill | None:
+        row = await self._session.get(SkillRow, skill_id)
         return None if row is None else _to_skill(row)
 
     async def list_visible(self, owner_id: UUID, *, include_all: bool) -> list[Skill]:
@@ -353,6 +369,7 @@ class SqlAlchemySkillRepository:
         version: SkillVersion,
         files: tuple[SkillFile, ...],
         requirements: tuple[dict[str, object], ...],
+        dependencies: tuple[ResolvedDependency, ...],
     ) -> None:
         self._session.add(
             SkillVersionRow(
@@ -400,6 +417,14 @@ class SqlAlchemySkillRepository:
                         note=_optional_str(requirement.get("note")),
                     )
                 )
+            for dependency in dependencies:
+                self._session.add(
+                    SkillDependencyRow(
+                        version_id=version.id,
+                        depends_on_skill_id=dependency.skill_id,
+                        version_constraint=dependency.constraint,
+                    )
+                )
             await self._session.flush()
         except IntegrityError as exc:
             raise ConflictError(
@@ -439,6 +464,17 @@ class SqlAlchemySkillRepository:
         return [
             StoredFile(path=path, sha256=blob_sha256, size=size, mode=mode)
             for path, blob_sha256, size, mode in result.all()
+        ]
+
+    async def list_version_dependencies(self, version_id: UUID) -> list[SkillDependency]:
+        result = await self._session.execute(
+            select(SkillRow.slug, SkillDependencyRow.version_constraint)
+            .join(SkillRow, SkillRow.id == SkillDependencyRow.depends_on_skill_id)
+            .where(SkillDependencyRow.version_id == version_id)
+            .order_by(SkillRow.slug)
+        )
+        return [
+            SkillDependency(slug=slug, constraint=constraint) for slug, constraint in result.all()
         ]
 
 

@@ -6,10 +6,9 @@ Cœur Skills : création d'une Skill et de son brouillon, fichiers adressés par
 publication immuable, lecture des versions, manifeste canonique, comparaison et historique des
 versions, API REST.
 
-Tâches couvertes : E2-01 → E2-06, E2-08, E2-12 (partie REST/ownership) et E2-14
-(ETag/If-Match). Les dépendances entre Skills (E2-11), le cycle de vie (E2-07),
-l'export/import (E2-09/E2-10), la recherche (E2-13), l'UI (E2-15/E2-16) et le scan de
-secrets E2-03 restent à livrer.
+Tâches couvertes : E2-01 → E2-06, E2-08, E2-11, E2-12 (partie REST/ownership) et E2-14
+(ETag/If-Match). Le cycle de vie (E2-07), l'export/import (E2-09/E2-10), la recherche
+(E2-13), l'UI (E2-15/E2-16) et le scan de secrets E2-03 restent à livrer.
 
 ## Règles de sécurité et d'accès
 
@@ -43,6 +42,26 @@ Le manifeste contient `manifest_version`, `name`, `description`, `slug`, `semver
   `tool_version_id`.
 - Le hash est `SHA-256` du JSON canonique UTF-8, clés triées, sans espace insignifiant.
 
+## Dépendances entre Skills
+
+`POST /api/v1/skills/{slug}/publish` accepte `dependencies: [{slug, constraint}]` :
+
+- le slug cible doit exister et être publié (ou déprécié) ; une dépendance vers soi-même est
+  rejetée (`422`) ;
+- la contrainte SemVer est validée puis évaluée : version exacte, `>=`, `>`, `<=`, `<`, `=`,
+  plages `^`/`~`, jokers `*`/`x` et alternatives `||` ;
+- la résolution retient la version publiée la plus récente qui satisfait la contrainte ; une
+  contrainte insatisfaite renvoie `409` ;
+- le graphe est parcouru récursivement sur les dépendances des versions résolues ; toute
+  boucle revenant à la Skill publiée est rejetée (`422`) avec le chemin du cycle ;
+- la déclaration et la version résolue sont figées dans le manifeste
+  (`slug`, `constraint`, `resolved_semver`) et dans la table `skill_dependency`
+  (`version_id`, `depends_on_skill_id`, `version_constraint`) ;
+- `GET /api/v1/skills/{slug}/versions/{semver}` expose la résolution dans `dependencies`.
+
+Les dépendances ne modifient jamais les versions déjà publiées : une nouvelle version d'une
+dépendance n'affecte que les publications suivantes.
+
 ## Comparaison de versions
 
 `GET /api/v1/skills/{slug}/diff?from={semver}&to={semver}` compare deux versions publiées
@@ -72,21 +91,18 @@ visibles par le principal :
 
 ## Limites connues
 
-- `dependencies` est présent mais vide : l'API de dépendances entre Skills n'est pas encore
-  livrée.
 - Le cycle de vie de la Skill (Draft/Review/Published/Deprecated/Archived), le scan de
   secrets, l'export/import, la recherche, l'UI et MCP restent hors de ce lot.
 - L'historique recalcule les statistiques à chaque appel ; une pagination ou un cache pourra
   être ajouté si les historiques deviennent volumineux.
-- Les tests d'intégration Skills ajoutés n'ont pas pu être exécutés localement faute de daemon
-  Docker ; ils sont destinés au job CI avec PostgreSQL.
 
 ## Vérifications
 
-- `uv run pytest -m "not integration" -q` : 135 tests, couverture 85,62 %.
+- `uv run pytest -m "not integration" -q` : 141 tests, couverture 86,36 %.
 - `uv run ruff check .` et `uv run ruff format --check .` : verts.
 - `uv run pyright` : 0 erreur.
 - `uv run lint-imports` : 6 contrats conservés.
-- `frontend/openapi.json` : 19 chemins, dont les 9 routes Skills ; snapshot et types régénérés.
+- `frontend/openapi.json` : 19 chemins, dont les 9 routes Skills, avec les schémas de
+  dépendances ; snapshot et types régénérés.
 - `pnpm run typecheck`, `pnpm test`, `pnpm run build` : verts.
-- Tests d'intégration Skills : ajoutés, non exécutés localement (Docker indisponible).
+- Tests d'intégration Skills : 2 tests verts sur PostgreSQL réel (Docker local).

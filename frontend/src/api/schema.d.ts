@@ -481,6 +481,28 @@ export interface components {
             skill: components["schemas"]["SkillResponse"];
         };
         /**
+         * DependencyRequest
+         * @description Dépendance vers une autre Skill, avec une contrainte SemVer.
+         */
+        DependencyRequest: {
+            /** Constraint */
+            constraint: string;
+            /** Slug */
+            slug: string;
+        };
+        /**
+         * DependencyResponse
+         * @description Dépendance déclarée et version publiée retenue.
+         */
+        DependencyResponse: {
+            /** Constraint */
+            constraint: string;
+            /** Resolved Semver */
+            resolved_semver: string;
+            /** Slug */
+            slug: string;
+        };
+        /**
          * DiffStatsResponse
          * @description Statistiques agrégées d'un changement de version.
          */
@@ -655,6 +677,8 @@ export interface components {
         PublishRequest: {
             /** Changelog */
             changelog: string;
+            /** Dependencies */
+            dependencies?: components["schemas"]["DependencyRequest"][] | null;
             /** Requirements */
             requirements?: components["schemas"]["RequirementRequest"][] | null;
             /** Semver */
@@ -811,6 +835,8 @@ export interface components {
          * @description Version publiée avec fichiers et manifeste.
          */
         VersionDetailResponse: {
+            /** Dependencies */
+            dependencies: components["schemas"]["DependencyResponse"][];
             /** Files */
             files: components["schemas"]["StoredFileResponse"][];
             /** Manifest */

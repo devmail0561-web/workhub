@@ -52,6 +52,10 @@ développement : la version `0.1.0` correspond à l'amorçage, sans release publ
   `git log` (du plus récent au plus ancien) avec parent, auteur, changelog, origine,
   empreinte et statistiques de changements ; les versions précédentes restent publiées et
   lisibles, sans archivage.
+- **Dépendances entre Skills (E2-11)** : `POST /publish` accepte `dependencies` avec une
+  contrainte SemVer (exacte, `>=`, `^`, `~`, jokers, `||`), résout la version publiée la plus
+  récente qui la satisfait, persiste le lien dans `skill_dependency` et rejette les
+  auto-dépendances, contraintes insatisfaites et cycles avec le chemin fautif.
 - **Durcissement base de données** : rôles `workhub_owner` (migrations) et `workhub_app`
   (runtime, sans DDL ni `TRUNCATE`), scripts `deploy/postgres/bootstrap.sh` et
   `permissions.sh`, services Compose `db-bootstrap` et `db-grants`.

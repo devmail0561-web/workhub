@@ -8,7 +8,9 @@ from hashlib import sha256
 from uuid import UUID
 
 from workhub.skills.domain.skill import (
+    ResolvedDependency,
     Skill,
+    SkillDependency,
     SkillDraft,
     SkillFile,
     SkillVersion,
@@ -27,9 +29,13 @@ class FakeSkillRepository:
         self.versions: dict[UUID, SkillVersion] = {}
         self.version_files: dict[UUID, list[StoredFile]] = {}
         self.requirements: dict[UUID, tuple[dict[str, object], ...]] = {}
+        self.dependencies: dict[UUID, tuple[ResolvedDependency, ...]] = {}
 
     async def find_by_slug(self, slug: str) -> Skill | None:
         return next((skill for skill in self.skills.values() if skill.slug == slug), None)
+
+    async def find_by_id(self, skill_id: UUID) -> Skill | None:
+        return self.skills.get(skill_id)
 
     async def list_visible(self, owner_id: UUID, *, include_all: bool) -> list[Skill]:
         if include_all:
@@ -127,6 +133,7 @@ class FakeSkillRepository:
         version: SkillVersion,
         files: tuple[SkillFile, ...],
         requirements: tuple[dict[str, object], ...],
+        dependencies: tuple[ResolvedDependency, ...],
     ) -> None:
         self.versions[version.id] = version
         self.version_files[version.id] = [
@@ -139,6 +146,7 @@ class FakeSkillRepository:
             for file in files
         ]
         self.requirements[version.id] = requirements
+        self.dependencies[version.id] = dependencies
 
     async def list_versions(self, skill_id: UUID) -> list[SkillVersion]:
         return [version for version in self.versions.values() if version.skill_id == skill_id]
@@ -155,3 +163,9 @@ class FakeSkillRepository:
 
     async def list_version_files(self, version_id: UUID) -> list[StoredFile]:
         return self.version_files.get(version_id, [])
+
+    async def list_version_dependencies(self, version_id: UUID) -> list[SkillDependency]:
+        return [
+            SkillDependency(slug=dependency.slug, constraint=dependency.constraint)
+            for dependency in self.dependencies.get(version_id, ())
+        ]

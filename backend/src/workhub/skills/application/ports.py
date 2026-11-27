@@ -8,7 +8,9 @@ from typing import Protocol
 from uuid import UUID
 
 from workhub.skills.domain.skill import (
+    ResolvedDependency,
     Skill,
+    SkillDependency,
     SkillDraft,
     SkillFile,
     SkillVersion,
@@ -22,6 +24,8 @@ class SkillRepository(Protocol):
     """Persistance des Skills, brouillons, blobs et versions."""
 
     async def find_by_slug(self, slug: str) -> Skill | None: ...
+
+    async def find_by_id(self, skill_id: UUID) -> Skill | None: ...
 
     async def list_visible(self, owner_id: UUID, *, include_all: bool) -> list[Skill]: ...
 
@@ -69,6 +73,7 @@ class SkillRepository(Protocol):
         version: SkillVersion,
         files: tuple[SkillFile, ...],
         requirements: tuple[dict[str, object], ...],
+        dependencies: tuple[ResolvedDependency, ...],
     ) -> None: ...
 
     async def list_versions(self, skill_id: UUID) -> list[SkillVersion]: ...
@@ -76,3 +81,5 @@ class SkillRepository(Protocol):
     async def find_version(self, skill_id: UUID, semver: str) -> SkillVersion | None: ...
 
     async def list_version_files(self, version_id: UUID) -> list[StoredFile]: ...
+
+    async def list_version_dependencies(self, version_id: UUID) -> list[SkillDependency]: ...

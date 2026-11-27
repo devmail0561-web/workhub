@@ -28,9 +28,12 @@ from workhub.skills.domain.skill import (
     build_manifest,
     diff_files,
     manifest_sha256,
+    normalize_dependencies,
     normalize_requirements,
+    satisfies_constraint,
     semver_key,
     summarize_diff,
+    validate_constraint,
     validate_files,
     validate_mode,
     validate_path,
@@ -58,6 +61,16 @@ async def create_demo(service: SkillService, principal: Principal | None = None)
         slug="demo-skill",
         domain="security",
         files=(SkillFile(path="SKILL.md", content=SKILL_MD),),
+    )
+
+
+async def create_named(service: SkillService, principal: Principal, slug: str) -> None:
+    content = f"---\nname: {slug}\ndescription: Skill {slug}\n---\n".encode()
+    await service.create(
+        principal,
+        slug=slug,
+        domain="security",
+        files=(SkillFile(path="SKILL.md", content=content),),
     )
 
 
@@ -185,6 +198,53 @@ def test_semver_ordering() -> None:
     assert semver_key("1.0.0-2") < semver_key("1.0.0-10")
     assert semver_key("1.0.0-alpha.2") < semver_key("1.0.0-alpha.10")
     assert semver_key("1.0.0-alpha.10") < semver_key("1.0.0-alpha.beta")
+
+
+def test_semver_constraints_are_validated_and_evaluated() -> None:
+    assert validate_constraint(" >=1.0.0   <2.0.0 ") == ">=1.0.0 <2.0.0"
+    assert satisfies_constraint("1.5.0", "^1.2.0")
+    assert not satisfies_constraint("2.0.0", "^1.2.0")
+    assert satisfies_constraint("0.2.5", "^0.2.3")
+    assert not satisfies_constraint("0.3.0", "^0.2.3")
+    assert satisfies_constraint("0.0.3", "^0.0.3")
+    assert not satisfies_constraint("0.0.4", "^0.0.3")
+    assert satisfies_constraint("1.2.9", "~1.2.3")
+    assert not satisfies_constraint("1.3.0", "~1.2.3")
+    assert satisfies_constraint("1.4.0", ">=1.0.0 <2.0.0")
+    assert not satisfies_constraint("2.0.0", ">=1.0.0 <2.0.0")
+    assert satisfies_constraint("3.0.0", "1.x || 3.x")
+    assert not satisfies_constraint("2.0.0", "1.x || 3.x")
+    assert satisfies_constraint("1.2.7", "1.2.x")
+    assert not satisfies_constraint("1.3.0", "1.2.x")
+    assert satisfies_constraint("4.0.0", "*")
+
+    for invalid in ("", ">=1.0.0 ||", "nope", "^", "1.0.0-", "1.x.3", ">= 1.0.0 <"):
+        with pytest.raises(ValidationError):
+            validate_constraint(invalid)
+
+
+def test_dependencies_are_normalized_and_deduplicated() -> None:
+    dependencies = normalize_dependencies(
+        (
+            {"slug": "base-skill", "constraint": " ^1.0.0 "},
+            {"slug": "audit-skill", "constraint": "~2.1.0"},
+        )
+    )
+    assert [(item.slug, item.constraint) for item in dependencies] == [
+        ("audit-skill", "~2.1.0"),
+        ("base-skill", "^1.0.0"),
+    ]
+    with pytest.raises(ValidationError):
+        normalize_dependencies(
+            (
+                {"slug": "base-skill", "constraint": "^1.0.0"},
+                {"slug": "base-skill", "constraint": "^2.0.0"},
+            )
+        )
+    with pytest.raises(ValidationError):
+        normalize_dependencies(({"slug": "base-skill", "constraint": "^1.0.0", "x": 1},))
+    with pytest.raises(ValidationError):
+        normalize_dependencies(({"slug": "Base Skill", "constraint": "^1.0.0"},))
 
 
 def test_diff_files_reports_changes_and_handles_binary_content() -> None:
@@ -391,6 +451,97 @@ async def test_publish_requires_a_strictly_increasing_version() -> None:
         await service.publish(principal, "demo-skill", semver="1.0.5", changelog="lower")
 
 
+async def test_publish_resolves_dependencies_to_the_highest_matching_version() -> None:
+    service, repository, _ = build_service()
+    principal = make_principal()
+    await create_named(service, principal, "base-skill")
+    await service.publish(principal, "base-skill", semver="1.0.0", changelog="base v1")
+    await service.publish(principal, "base-skill", semver="1.2.0", changelog="base v1.2")
+    await service.publish(principal, "base-skill", semver="2.0.0", changelog="base v2")
+    await create_demo(service, principal)
+
+    version = await service.publish(
+        principal,
+        "demo-skill",
+        semver="1.0.0",
+        changelog="uses base",
+        dependencies=({"slug": "base-skill", "constraint": "^1.0.0"},),
+    )
+
+    detail = await service.get_version(principal, "demo-skill", "1.0.0")
+    assert [(item.slug, item.constraint, item.resolved_semver) for item in detail.dependencies] == [
+        ("base-skill", "^1.0.0", "1.2.0")
+    ]
+    assert detail.manifest["dependencies"] == [
+        {
+            "slug": "base-skill",
+            "constraint": "^1.0.0",
+            "resolved_semver": "1.2.0",
+        }
+    ]
+    stored = repository.dependencies[version.id]
+    assert [(item.slug, item.constraint, item.semver) for item in stored] == [
+        ("base-skill", "^1.0.0", "1.2.0")
+    ]
+
+
+async def test_publish_rejects_unknown_unsatisfied_or_self_dependencies() -> None:
+    service, _, _ = build_service()
+    principal = make_principal()
+    await create_named(service, principal, "base-skill")
+    await service.publish(principal, "base-skill", semver="1.0.0", changelog="base v1")
+    await create_demo(service, principal)
+
+    with pytest.raises(ValidationError):
+        await service.publish(
+            principal,
+            "demo-skill",
+            semver="1.0.0",
+            changelog="unknown",
+            dependencies=({"slug": "missing-skill", "constraint": "^1.0.0"},),
+        )
+    with pytest.raises(ConflictError):
+        await service.publish(
+            principal,
+            "demo-skill",
+            semver="1.0.0",
+            changelog="unsatisfied",
+            dependencies=({"slug": "base-skill", "constraint": "^9.0.0"},),
+        )
+    with pytest.raises(ValidationError):
+        await service.publish(
+            principal,
+            "demo-skill",
+            semver="1.0.0",
+            changelog="self",
+            dependencies=({"slug": "demo-skill", "constraint": "^1.0.0"},),
+        )
+
+
+async def test_publish_rejects_dependency_cycles() -> None:
+    service, _, _ = build_service()
+    principal = make_principal()
+    await create_named(service, principal, "base-skill")
+    await service.publish(principal, "base-skill", semver="1.0.0", changelog="base v1")
+    await create_demo(service, principal)
+    await service.publish(
+        principal,
+        "demo-skill",
+        semver="1.0.0",
+        changelog="depends on base",
+        dependencies=({"slug": "base-skill", "constraint": "^1.0.0"},),
+    )
+
+    with pytest.raises(ValidationError, match="Cycle de dépendances"):
+        await service.publish(
+            principal,
+            "base-skill",
+            semver="1.1.0",
+            changelog="would create a cycle",
+            dependencies=({"slug": "demo-skill", "constraint": "^1.0.0"},),
+        )
+
+
 async def test_create_rejects_duplicates_and_invalid_files() -> None:
     service, _, _ = build_service()
     principal = make_principal()
@@ -564,6 +715,61 @@ async def test_publish_requires_matching_draft_version() -> None:
             changelog="stale",
             expected_lock_version=0,
         )
+
+
+async def test_rest_dependencies_are_declared_and_resolved() -> None:
+    service, _, _ = build_service()
+    principal = make_principal()
+    await create_named(service, principal, "base-skill")
+    await service.publish(principal, "base-skill", semver="1.0.0", changelog="base v1")
+    await create_demo(service, principal)
+
+    async def override_service() -> AsyncIterator[SkillService]:
+        yield service
+
+    app.dependency_overrides[get_skill_service] = override_service
+    app.dependency_overrides[current_principal] = lambda: principal
+    transport = httpx.ASGITransport(app=app)
+    try:
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            published = await client.post(
+                "/api/v1/skills/demo-skill/publish",
+                headers={"If-Match": '"0"'},
+                json={
+                    "semver": "1.0.0",
+                    "changelog": "uses base",
+                    "dependencies": [
+                        {"slug": "base-skill", "constraint": "^1.0.0"},
+                    ],
+                },
+            )
+            assert published.status_code == 200
+
+            detail = await client.get("/api/v1/skills/demo-skill/versions/1.0.0")
+            assert detail.status_code == 200
+            assert detail.json()["dependencies"] == [
+                {
+                    "slug": "base-skill",
+                    "constraint": "^1.0.0",
+                    "resolved_semver": "1.0.0",
+                }
+            ]
+
+            cycle = await client.post(
+                "/api/v1/skills/demo-skill/publish",
+                headers={"If-Match": '"1"'},
+                json={
+                    "semver": "1.1.0",
+                    "changelog": "self dependency",
+                    "dependencies": [
+                        {"slug": "demo-skill", "constraint": "^1.0.0"},
+                    ],
+                },
+            )
+            assert cycle.status_code == 422
+            assert "elle-même" in cycle.json()["error"]["message"]
+    finally:
+        app.dependency_overrides.clear()
 
 
 async def test_rest_skills_flow() -> None:

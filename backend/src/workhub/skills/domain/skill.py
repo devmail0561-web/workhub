@@ -31,8 +31,21 @@ MAX_VERSION_BYTES = 50 * 1024 * 1024
 MAX_FILES = 500
 MAX_CHANGELOG_LENGTH = 10_000
 MAX_DIFF_CHARS = 200_000
+MAX_DEPENDENCIES = 50
+MAX_CONSTRAINT_LENGTH = 200
 
 SemVerKey = tuple[int, int, int, int, tuple[tuple[int, int, str], ...]]
+_CONSTRAINT_VERSION = re.compile(
+    r"^(?P<major>0|[1-9][0-9]*)"
+    r"(?:\.(?P<minor>0|[1-9][0-9]*|[xX*]))?"
+    r"(?:\.(?P<patch>0|[1-9][0-9]*|[xX*]))?"
+    r"(?:-(?P<prerelease>(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
+    r"(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?"
+    r"(?:\+(?P<build>[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
+)
+_CONSTRAINT_OPERATOR = re.compile(r"^(?P<operator>>=|<=|>|<|=|\^|~)?(?P<version>.+)$")
+_CONSTRAINT_SPACING = re.compile(r"(>=|<=|>|<|=|\^|~)\s+")
+_DEPENDENCY_FIELDS = frozenset({"slug", "constraint"})
 _REQUIREMENT_FIELDS = frozenset(
     {
         "kind",
@@ -164,6 +177,41 @@ class SkillMetadata:
     description: str
 
 
+@dataclass(frozen=True, slots=True)
+class SkillDependency:
+    """Dépendance déclarée vers une autre Skill, avec une contrainte SemVer."""
+
+    slug: str
+    constraint: str
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedDependency:
+    """Dépendance résolue vers une version publiée précise."""
+
+    slug: str
+    constraint: str
+    skill_id: UUID
+    version_id: UUID
+    semver: str
+
+
+@dataclass(frozen=True, slots=True)
+class _ConstraintVersion:
+    major: int
+    minor: int | None
+    patch: int | None
+    prerelease: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class _VersionRange:
+    low: SemVerKey | None = None
+    low_inclusive: bool = True
+    high: SemVerKey | None = None
+    high_inclusive: bool = False
+
+
 def validate_slug(slug: str) -> str:
     """Valide et retourne un slug de Skill."""
     normalized = slug.strip()
@@ -180,6 +228,61 @@ def validate_semver(semver: str) -> str:
     if not SEMVER_PATTERN.fullmatch(normalized):
         raise ValidationError(f"Version SemVer invalide : {semver!r}")
     return normalized
+
+
+def validate_constraint(constraint: str) -> str:
+    """Valide une contrainte SemVer et retourne sa forme normalisée.
+
+    Sous-ensemble supporté : version exacte, comparaisons ``>=``, ``>``, ``<=``,
+    ``<``, ``=``, plages ``^`` et ``~``, jokers ``*``/``x`` et alternatives ``||``.
+    """
+    normalized = _CONSTRAINT_SPACING.sub(r"\1", " ".join(constraint.split()))
+    if not 1 <= len(normalized) <= MAX_CONSTRAINT_LENGTH:
+        raise ValidationError(
+            f"La contrainte SemVer doit contenir entre 1 et {MAX_CONSTRAINT_LENGTH} caractères"
+        )
+    for alternative in normalized.split("||"):
+        tokens = alternative.split()
+        if not tokens:
+            raise ValidationError(f"Contrainte SemVer invalide : {constraint!r}")
+        for token in tokens:
+            _token_range(token)
+    return normalized
+
+
+def satisfies_constraint(version: str, constraint: str) -> bool:
+    """Indique si une version SemVer satisfait la contrainte fournie."""
+    key = semver_key(version)
+    normalized = validate_constraint(constraint)
+    return any(
+        all(_range_matches(key, _token_range(token)) for token in alternative.split())
+        for alternative in normalized.split("||")
+    )
+
+
+def normalize_dependencies(
+    dependencies: Iterable[Mapping[str, object]],
+) -> tuple[SkillDependency, ...]:
+    """Valide, déduplique et trie les dépendances déclarées."""
+    normalized: list[SkillDependency] = []
+    seen: set[str] = set()
+    for raw in dependencies:
+        unknown = set(raw) - _DEPENDENCY_FIELDS
+        if unknown:
+            raise ValidationError(
+                "Champ de dépendance inconnu : " + ", ".join(sorted(str(item) for item in unknown))
+            )
+        slug = validate_slug(_required_text(raw.get("slug"), "slug"))
+        constraint = validate_constraint(_required_text(raw.get("constraint"), "constraint"))
+        if slug in seen:
+            raise ValidationError(f"Dépendance dupliquée : {slug}")
+        seen.add(slug)
+        normalized.append(SkillDependency(slug=slug, constraint=constraint))
+    if len(normalized) > MAX_DEPENDENCIES:
+        raise ValidationError(
+            f"Une Skill ne peut pas déclarer plus de {MAX_DEPENDENCIES} dépendances"
+        )
+    return tuple(sorted(normalized, key=lambda item: item.slug))
 
 
 def validate_changelog(changelog: str) -> str:
@@ -513,6 +616,105 @@ def semver_key(value: str) -> SemVerKey:
         (0, int(part), "") if part.isdigit() else (1, 0, part) for part in prerelease.split(".")
     )
     return (major, minor, patch, 0, identifiers)
+
+
+def _token_range(token: str) -> _VersionRange:
+    match = _CONSTRAINT_OPERATOR.fullmatch(token)
+    if match is None:
+        raise ValidationError(f"Contrainte SemVer invalide : {token!r}")
+    operator = match.group("operator") or ""
+    raw = match.group("version").strip()
+    if raw in {"*", "x", "X"}:
+        if operator:
+            raise ValidationError(f"Contrainte SemVer invalide : {token!r}")
+        return _VersionRange()
+    parts = _parse_constraint_version(raw)
+    low = _constraint_key(parts, parts.minor or 0, parts.patch or 0)
+    if operator in {"", "="}:
+        if parts.minor is None:
+            return _VersionRange(low=_constraint_key(parts, 0, 0), high=_key(parts.major + 1, 0, 0))
+        if parts.patch is None:
+            return _VersionRange(low=low, high=_key(parts.major, parts.minor + 1, 0))
+        return _VersionRange(low=low, high=low, high_inclusive=True)
+    if operator == "^":
+        return _VersionRange(low=low, high=_caret_upper_bound(parts))
+    if operator == "~":
+        return _VersionRange(low=low, high=_tilde_upper_bound(parts))
+    if operator == ">=":
+        return _VersionRange(low=low)
+    if operator == ">":
+        return _VersionRange(low=low, low_inclusive=False)
+    if operator == "<=":
+        return _VersionRange(high=low, high_inclusive=True)
+    return _VersionRange(high=low, high_inclusive=False)
+
+
+def _range_matches(key: SemVerKey, version_range: _VersionRange) -> bool:
+    if version_range.low is not None:
+        if key < version_range.low:
+            return False
+        if key == version_range.low and not version_range.low_inclusive:
+            return False
+    if version_range.high is not None:
+        if key > version_range.high:
+            return False
+        if key == version_range.high and not version_range.high_inclusive:
+            return False
+    return True
+
+
+def _caret_upper_bound(parts: _ConstraintVersion) -> SemVerKey:
+    if parts.minor is None:
+        return _key(parts.major + 1, 0, 0)
+    if parts.major > 0:
+        return _key(parts.major + 1, 0, 0)
+    if parts.minor > 0 or parts.patch is None:
+        return _key(0, parts.minor + 1, 0)
+    return _key(0, 0, parts.patch + 1)
+
+
+def _tilde_upper_bound(parts: _ConstraintVersion) -> SemVerKey:
+    if parts.minor is None:
+        return _key(parts.major + 1, 0, 0)
+    return _key(parts.major, parts.minor + 1, 0)
+
+
+def _parse_constraint_version(value: str) -> _ConstraintVersion:
+    match = _CONSTRAINT_VERSION.fullmatch(value)
+    if match is None:
+        raise ValidationError(f"Contrainte SemVer invalide : {value!r}")
+    minor = _constraint_number(match.group("minor"))
+    patch = _constraint_number(match.group("patch"))
+    prerelease = match.group("prerelease")
+    if minor is None and patch is not None:
+        raise ValidationError(f"Contrainte SemVer invalide : {value!r}")
+    if prerelease is not None and (minor is None or patch is None):
+        raise ValidationError(f"Contrainte SemVer invalide : {value!r}")
+    return _ConstraintVersion(
+        major=int(match.group("major")),
+        minor=minor,
+        patch=patch,
+        prerelease=prerelease,
+    )
+
+
+def _constraint_number(value: str | None) -> int | None:
+    if value is None or value in {"x", "X", "*"}:
+        return None
+    return int(value)
+
+
+def _constraint_key(
+    parts: _ConstraintVersion,
+    minor: int,
+    patch: int,
+) -> SemVerKey:
+    suffix = f"-{parts.prerelease}" if parts.prerelease is not None else ""
+    return semver_key(f"{parts.major}.{minor}.{patch}{suffix}")
+
+
+def _key(major: int, minor: int, patch: int) -> SemVerKey:
+    return semver_key(f"{major}.{minor}.{patch}")
 
 
 def _canonical_json(value: object) -> str:

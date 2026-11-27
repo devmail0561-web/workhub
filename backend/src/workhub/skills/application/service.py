@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import cast
 from uuid import UUID
 
 from workhub.audit.api import AuditEntry, AuditRecorder
@@ -23,6 +24,7 @@ from workhub.skills.application.views import (
     DraftFileView,
     DraftView,
     FileDiffView,
+    ResolvedDependencyView,
     SkillView,
     VersionDetailView,
     VersionDiffView,
@@ -34,14 +36,18 @@ from workhub.skills.domain.skill import (
     MAX_FILE_BYTES,
     MAX_FILES,
     MAX_VERSION_BYTES,
+    ResolvedDependency,
     Skill,
+    SkillDependency,
     SkillDraft,
     SkillFile,
     SkillVersion,
     build_manifest,
     diff_files,
     manifest_sha256,
+    normalize_dependencies,
     normalize_requirements,
+    satisfies_constraint,
     semver_key,
     skill_metadata,
     summarize_diff,
@@ -259,6 +265,7 @@ class SkillService:
         semver: str,
         changelog: str,
         requirements: tuple[dict[str, object], ...] = (),
+        dependencies: tuple[dict[str, object], ...] = (),
         expected_lock_version: int | None = None,
         request_id: str | None = None,
     ) -> VersionView:
@@ -270,6 +277,7 @@ class SkillService:
         normalized_semver = validate_semver(semver)
         normalized_changelog = validate_changelog(changelog)
         normalized_requirements = normalize_requirements(requirements)
+        normalized_dependencies = normalize_dependencies(dependencies)
         stored_files = await self._skills.list_draft_files(draft.id)
         if not stored_files:
             raise ValidationError("Le brouillon est vide")
@@ -293,6 +301,7 @@ class SkillService:
         else:
             parent = None
 
+        resolved_dependencies = await self._resolve_dependencies(skill, normalized_dependencies)
         manifest = build_manifest(
             slug=skill.slug,
             name=metadata.name,
@@ -301,6 +310,14 @@ class SkillService:
             parent=parent.semver if parent is not None else None,
             files=normalized_files,
             requirements=normalized_requirements,
+            dependencies=tuple(
+                {
+                    "slug": dependency.slug,
+                    "constraint": dependency.constraint,
+                    "resolved_semver": dependency.semver,
+                }
+                for dependency in resolved_dependencies
+            ),
         )
         now = self._clock.now()
         expected = draft.lock_version if expected_lock_version is None else expected_lock_version
@@ -322,7 +339,12 @@ class SkillService:
             origin_kind=origin_kind,
             origin_integration_id=(principal.id if origin_kind == "integration" else None),
         )
-        await self._skills.add_version(version, normalized_files, normalized_requirements)
+        await self._skills.add_version(
+            version,
+            normalized_files,
+            normalized_requirements,
+            resolved_dependencies,
+        )
         if not await self._skills.update_draft_base(draft.id, version.id, expected, now):
             raise PreconditionFailedError("Le brouillon a été modifié entre-temps")
         await self._skills.update_skill_status(skill.id, "published")
@@ -390,6 +412,7 @@ class SkillService:
             version=VersionView.from_version(version, parent_semver=parent_semver),
             files=tuple(files),
             manifest=version.manifest,
+            dependencies=_manifest_dependencies(version.manifest),
         )
 
     @require_scope("skills:read")
@@ -462,6 +485,85 @@ class SkillService:
             head=entries[0].semver if entries else None,
             versions=tuple(entries),
         )
+
+    async def _resolve_dependencies(
+        self,
+        skill: Skill,
+        dependencies: tuple[SkillDependency, ...],
+    ) -> tuple[ResolvedDependency, ...]:
+        resolved: list[ResolvedDependency] = []
+        for dependency in dependencies:
+            if dependency.slug == skill.slug:
+                raise ValidationError("Une Skill ne peut pas dépendre d'elle-même")
+            target = await self._skills.find_by_slug(dependency.slug)
+            if target is None or target.status not in {"published", "deprecated"}:
+                raise ValidationError(f"Dépendance introuvable ou non publiée : {dependency.slug}")
+            version = await self._highest_satisfying(target.id, dependency.constraint)
+            if version is None:
+                raise ConflictError(
+                    f"Aucune version de {dependency.slug!r} ne satisfait {dependency.constraint!r}"
+                )
+            resolved.append(
+                ResolvedDependency(
+                    slug=dependency.slug,
+                    constraint=dependency.constraint,
+                    skill_id=target.id,
+                    version_id=version.id,
+                    semver=version.semver,
+                )
+            )
+        for dependency in resolved:
+            await self._assert_no_cycle(skill.id, dependency, (skill.slug,), set())
+        return tuple(resolved)
+
+    async def _highest_satisfying(
+        self,
+        skill_id: UUID,
+        constraint: str,
+    ) -> SkillVersion | None:
+        versions = await self._skills.list_versions(skill_id)
+        candidates = [
+            version
+            for version in versions
+            if version.status == "published" and satisfies_constraint(version.semver, constraint)
+        ]
+        return max(candidates, key=lambda item: semver_key(item.semver), default=None)
+
+    async def _assert_no_cycle(
+        self,
+        root_skill_id: UUID,
+        dependency: ResolvedDependency,
+        path: tuple[str, ...],
+        visited: set[UUID],
+    ) -> None:
+        if dependency.skill_id == root_skill_id:
+            raise ValidationError("Cycle de dépendances : " + " -> ".join((*path, dependency.slug)))
+        if dependency.version_id in visited:
+            return
+        visited.add(dependency.version_id)
+        for declared in await self._skills.list_version_dependencies(dependency.version_id):
+            target = await self._skills.find_by_slug(declared.slug)
+            if target is None:
+                continue
+            if target.id == root_skill_id:
+                raise ValidationError(
+                    "Cycle de dépendances : " + " -> ".join((*path, dependency.slug, declared.slug))
+                )
+            version = await self._highest_satisfying(target.id, declared.constraint)
+            if version is None:
+                continue
+            await self._assert_no_cycle(
+                root_skill_id,
+                ResolvedDependency(
+                    slug=declared.slug,
+                    constraint=declared.constraint,
+                    skill_id=target.id,
+                    version_id=version.id,
+                    semver=version.semver,
+                ),
+                (*path, dependency.slug),
+                visited,
+            )
 
     async def _find_version(self, skill_id: UUID, semver: str) -> SkillVersion:
         version = await self._skills.find_version(skill_id, validate_semver(semver))
@@ -558,3 +660,32 @@ class SkillService:
                 details=details,
             )
         )
+
+
+def _manifest_dependencies(
+    manifest: dict[str, object],
+) -> tuple[ResolvedDependencyView, ...]:
+    raw = manifest.get("dependencies")
+    if not isinstance(raw, list):
+        return ()
+    dependencies: list[ResolvedDependencyView] = []
+    for item in cast("list[object]", raw):
+        if not isinstance(item, dict):
+            continue
+        entry = cast("dict[str, object]", item)
+        slug = entry.get("slug")
+        constraint = entry.get("constraint")
+        resolved_semver = entry.get("resolved_semver")
+        if (
+            isinstance(slug, str)
+            and isinstance(constraint, str)
+            and isinstance(resolved_semver, str)
+        ):
+            dependencies.append(
+                ResolvedDependencyView(
+                    slug=slug,
+                    constraint=constraint,
+                    resolved_semver=resolved_semver,
+                )
+            )
+    return tuple(dependencies)

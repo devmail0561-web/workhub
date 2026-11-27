@@ -20,10 +20,12 @@ from workhub.shared.api import (
     Principal,
     PrincipalType,
     SystemClock,
+    ValidationError,
 )
 from workhub.skills.application.service import SkillService
 from workhub.skills.domain.skill import SkillFile
 from workhub.skills.infrastructure.repositories import (
+    SkillDependencyRow,
     SkillRow,
     SkillVersionRow,
     SqlAlchemySkillRepository,
@@ -132,4 +134,55 @@ async def test_integration_owner_origin_etag_and_published_visibility(
             path="notes.txt",
             content=b"stale",
             expected_lock_version=0,
+        )
+
+
+async def test_skill_dependencies_are_persisted_and_cycles_rejected(
+    session: AsyncSession,
+) -> None:
+    owner = await _admin(session)
+    suffix = uuid4().hex[:8]
+    base_slug = f"base-{suffix}"
+    demo_slug = f"demo-{suffix}"
+    skills = _skill_service(session)
+    for slug in (base_slug, demo_slug):
+        content = f"---\nname: {slug}\ndescription: Skill {slug}\n---\n".encode()
+        await skills.create(
+            owner,
+            slug=slug,
+            domain="security",
+            files=(SkillFile(path="SKILL.md", content=content),),
+        )
+    await skills.publish(owner, base_slug, semver="1.0.0", changelog="base")
+    version = await skills.publish(
+        owner,
+        demo_slug,
+        semver="1.0.0",
+        changelog="depends on base",
+        dependencies=({"slug": base_slug, "constraint": "^1.0.0"},),
+    )
+
+    rows = (
+        (
+            await session.execute(
+                select(SkillDependencyRow).where(SkillDependencyRow.version_id == version.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
+    assert rows[0].version_constraint == "^1.0.0"
+    detail = await skills.get_version(owner, demo_slug, "1.0.0")
+    assert [(item.slug, item.resolved_semver) for item in detail.dependencies] == [
+        (base_slug, "1.0.0")
+    ]
+
+    with pytest.raises(ValidationError, match="Cycle de dépendances"):
+        await skills.publish(
+            owner,
+            base_slug,
+            semver="1.1.0",
+            changelog="would create a cycle",
+            dependencies=({"slug": demo_slug, "constraint": "^1.0.0"},),
         )
